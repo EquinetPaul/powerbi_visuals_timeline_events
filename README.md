@@ -2,6 +2,8 @@
 
 Custom Power BI visual that displays events on a horizontal timeline.
 
+![Screenshot of the visual](assets/screenshot_sample.png)
+
 ## Features
 - Horizontal timeline with min/max date bounds
 - Event symbols plotted by date (optional per-event symbol shapes)
