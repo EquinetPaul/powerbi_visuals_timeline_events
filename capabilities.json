@@ -17,9 +17,14 @@
         }
     ],
     "objects": {
-        "dataPoint": {
+        "timeline": {
             "properties": {
-                "defaultColor": {
+                "scaling": {
+                    "type": {
+                        "numeric": true
+                    }
+                },
+                "symbolColor": {
                     "type": {
                         "fill": {
                             "solid": {
@@ -28,30 +33,24 @@
                         }
                     }
                 },
-                "showAllDataPoints": {
+                "showEventLabels": {
                     "type": {
                         "bool": true
                     }
                 },
-                "fill": {
+                "showDates": {
                     "type": {
-                        "fill": {
-                            "solid": {
-                                "color": true
-                            }
-                        }
+                        "bool": true
                     }
                 },
-                "fillRule": {
+                "useEventSymbols": {
                     "type": {
-                        "fill": {}
+                        "bool": true
                     }
                 },
-                 "fontSize": {
+                "showLegend": {
                     "type": {
-                        "formatting": {
-                            "fontSize": true
-                        }
+                        "bool": true
                     }
                 }
             }

@@ -33,42 +33,55 @@ import FormattingSettingsSlice = formattingSettings.Slice;
 import FormattingSettingsModel = formattingSettings.Model;
 
 /**
- * Data Point Formatting Card
+ * Timeline Formatting Card
  */
-class DataPointCardSettings extends FormattingSettingsCard {
-    defaultColor = new formattingSettings.ColorPicker({
-        name: "defaultColor",
-        displayName: "Default color",
-        value: { value: "" }
+class TimelineCardSettings extends FormattingSettingsCard {
+    scaling = new formattingSettings.NumUpDown({
+        name: "scaling",
+        displayName: "Scaling",
+        value: 1
     });
 
-    showAllDataPoints = new formattingSettings.ToggleSwitch({
-        name: "showAllDataPoints",
-        displayName: "Show all",
+    symbolColor = new formattingSettings.ColorPicker({
+        name: "symbolColor",
+        displayName: "Symbol color",
+        value: { value: "#2563eb" }
+    });
+
+    showEventLabels = new formattingSettings.ToggleSwitch({
+        name: "showEventLabels",
+        displayName: "Show event names",
         value: true
     });
 
-    fill = new formattingSettings.ColorPicker({
-        name: "fill",
-        displayName: "Fill",
-        value: { value: "" }
+    showDates = new formattingSettings.ToggleSwitch({
+        name: "showDates",
+        displayName: "Show dates",
+        value: false
     });
 
-    fillRule = new formattingSettings.ColorPicker({
-        name: "fillRule",
-        displayName: "Color saturation",
-        value: { value: "" }
+    useEventSymbols = new formattingSettings.ToggleSwitch({
+        name: "useEventSymbols",
+        displayName: "Use event symbols",
+        value: false
     });
 
-    fontSize = new formattingSettings.NumUpDown({
-        name: "fontSize",
-        displayName: "Text Size",
-        value: 12
+    showLegend = new formattingSettings.ToggleSwitch({
+        name: "showLegend",
+        displayName: "Show legend",
+        value: false
     });
 
-    name: string = "dataPoint";
-    displayName: string = "Data colors";
-    slices: Array<FormattingSettingsSlice> = [this.defaultColor, this.showAllDataPoints, this.fill, this.fillRule, this.fontSize];
+    name: string = "timeline";
+    displayName: string = "Timeline";
+    slices: Array<FormattingSettingsSlice> = [
+        this.scaling,
+        this.symbolColor,
+        this.showEventLabels,
+        this.showDates,
+        this.useEventSymbols,
+        this.showLegend
+    ];
 }
 
 /**
@@ -77,7 +90,7 @@ class DataPointCardSettings extends FormattingSettingsCard {
 */
 export class VisualFormattingSettingsModel extends FormattingSettingsModel {
     // Create formatting settings model formatting cards
-    dataPointCard = new DataPointCardSettings();
+    timelineCard = new TimelineCardSettings();
 
-    cards = [this.dataPointCard];
+    cards = [this.timelineCard];
 }
