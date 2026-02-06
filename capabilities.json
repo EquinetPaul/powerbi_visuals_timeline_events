@@ -1,0 +1,86 @@
+{
+    "dataRoles": [
+        {
+            "displayName": "Date",
+            "name": "date",
+            "kind": "Grouping"
+        },
+        {
+            "displayName": "Event Name",
+            "name": "event",
+            "kind": "Grouping"
+        },
+        {
+            "displayName": "Tooltip",
+            "name": "tooltip",
+            "kind": "GroupingOrMeasure"
+        }
+    ],
+    "objects": {
+        "dataPoint": {
+            "properties": {
+                "defaultColor": {
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
+                    }
+                },
+                "showAllDataPoints": {
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "fill": {
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
+                    }
+                },
+                "fillRule": {
+                    "type": {
+                        "fill": {}
+                    }
+                },
+                 "fontSize": {
+                    "type": {
+                        "formatting": {
+                            "fontSize": true
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "dataViewMappings": [
+        {
+            "table": {
+                "rows": {
+                    "select": [
+                        {
+                            "for": {
+                                "in": "date"
+                            }
+                        },
+                        {
+                            "for": {
+                                "in": "event"
+                            }
+                        },
+                        {
+                            "for": {
+                                "in": "tooltip"
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    ],
+    "privileges": []
+}
