@@ -2,29 +2,149 @@
     "dataRoles": [
         {
             "displayName": "Date",
+            "displayNameKey": "Role_Date",
             "name": "date",
             "kind": "Grouping"
         },
         {
             "displayName": "Event Name",
+            "displayNameKey": "Role_Event",
             "name": "event",
             "kind": "Grouping"
         },
         {
+            "displayName": "Legend",
+            "displayNameKey": "Role_Legend",
+            "name": "legend",
+            "kind": "Grouping"
+        },
+        {
             "displayName": "Tooltip",
+            "displayNameKey": "Role_Tooltip",
             "name": "tooltip",
             "kind": "GroupingOrMeasure"
         }
     ],
     "objects": {
-        "timeline": {
+        "legend": {
+            "displayNameKey": "Card_Legend",
             "properties": {
-                "scaling": {
+                "show": {
+                    "displayNameKey": "Prop_Show",
                     "type": {
-                        "numeric": true
+                        "bool": true
                     }
                 },
-                "symbolColor": {
+                "position": {
+                    "displayNameKey": "Prop_Position",
+                    "type": {
+                        "enumeration": [
+                            {
+                                "value": "Top",
+                                "displayName": "Top",
+                                "displayNameKey": "Enum_Top"
+                            },
+                            {
+                                "value": "Bottom",
+                                "displayName": "Bottom",
+                                "displayNameKey": "Enum_Bottom"
+                            },
+                            {
+                                "value": "Left",
+                                "displayName": "Left",
+                                "displayNameKey": "Enum_Left"
+                            },
+                            {
+                                "value": "Right",
+                                "displayName": "Right",
+                                "displayNameKey": "Enum_Right"
+                            },
+                            {
+                                "value": "TopCenter",
+                                "displayName": "Top center",
+                                "displayNameKey": "Enum_TopCenter"
+                            },
+                            {
+                                "value": "BottomCenter",
+                                "displayName": "Bottom center",
+                                "displayNameKey": "Enum_BottomCenter"
+                            },
+                            {
+                                "value": "LeftCenter",
+                                "displayName": "Left center",
+                                "displayNameKey": "Enum_LeftCenter"
+                            },
+                            {
+                                "value": "RightCenter",
+                                "displayName": "Right center",
+                                "displayNameKey": "Enum_RightCenter"
+                            }
+                        ]
+                    }
+                },
+                "showTitle": {
+                    "displayNameKey": "Prop_Title",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "titleText": {
+                    "displayNameKey": "Prop_TitleText",
+                    "type": {
+                        "text": true
+                    }
+                },
+                "fontFamily": {
+                    "displayNameKey": "Prop_Font",
+                    "type": {
+                        "formatting": {
+                            "fontFamily": true
+                        }
+                    }
+                },
+                "fontSize": {
+                    "displayNameKey": "Prop_Size",
+                    "type": {
+                        "formatting": {
+                            "fontSize": true
+                        }
+                    }
+                },
+                "bold": {
+                    "displayNameKey": "Prop_Font",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "italic": {
+                    "displayNameKey": "Prop_Font",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "underline": {
+                    "displayNameKey": "Prop_Font",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "labelColor": {
+                    "displayNameKey": "Prop_Color",
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "colors": {
+            "displayNameKey": "Card_Colors",
+            "properties": {
+                "defaultColor": {
+                    "displayNameKey": "Prop_DefaultColor",
                     "type": {
                         "fill": {
                             "solid": {
@@ -33,24 +153,303 @@
                         }
                     }
                 },
-                "showEventLabels": {
+                "fill": {
+                    "displayNameKey": "Prop_Color",
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "markers": {
+            "displayNameKey": "Card_Markers",
+            "properties": {
+                "shape": {
+                    "displayNameKey": "Prop_Shape",
+                    "type": {
+                        "enumeration": [
+                            {
+                                "value": "circle",
+                                "displayName": "Circle",
+                                "displayNameKey": "Enum_Circle"
+                            },
+                            {
+                                "value": "square",
+                                "displayName": "Square",
+                                "displayNameKey": "Enum_Square"
+                            },
+                            {
+                                "value": "diamond",
+                                "displayName": "Diamond",
+                                "displayNameKey": "Enum_Diamond"
+                            },
+                            {
+                                "value": "triangle",
+                                "displayName": "Triangle",
+                                "displayNameKey": "Enum_Triangle"
+                            },
+                            {
+                                "value": "invertedTriangle",
+                                "displayName": "Inverted triangle",
+                                "displayNameKey": "Enum_InvertedTriangle"
+                            },
+                            {
+                                "value": "cross",
+                                "displayName": "Cross",
+                                "displayNameKey": "Enum_Cross"
+                            },
+                            {
+                                "value": "star",
+                                "displayName": "Star",
+                                "displayNameKey": "Enum_Star"
+                            },
+                            {
+                                "value": "hexagon",
+                                "displayName": "Hexagon",
+                                "displayNameKey": "Enum_Hexagon"
+                            }
+                        ]
+                    }
+                },
+                "shapeByEvent": {
+                    "displayNameKey": "Prop_ShapeByEvent",
                     "type": {
                         "bool": true
                     }
                 },
-                "showDates": {
+                "size": {
+                    "displayNameKey": "Prop_Size",
+                    "type": {
+                        "numeric": true
+                    }
+                }
+            }
+        },
+        "dateAxis": {
+            "displayNameKey": "Card_DateAxis",
+            "properties": {
+                "show": {
+                    "displayNameKey": "Prop_Show",
                     "type": {
                         "bool": true
                     }
                 },
-                "useEventSymbols": {
+                "labelMode": {
+                    "displayNameKey": "Prop_LabelMode",
+                    "type": {
+                        "enumeration": [
+                            {
+                                "value": "auto",
+                                "displayName": "Auto",
+                                "displayNameKey": "Enum_Auto"
+                            },
+                            {
+                                "value": "eventDates",
+                                "displayName": "Event dates",
+                                "displayNameKey": "Enum_EventDates"
+                            },
+                            {
+                                "value": "startEnd",
+                                "displayName": "Start and end",
+                                "displayNameKey": "Enum_StartEnd"
+                            }
+                        ]
+                    }
+                },
+                "fontFamily": {
+                    "displayNameKey": "Prop_Font",
+                    "type": {
+                        "formatting": {
+                            "fontFamily": true
+                        }
+                    }
+                },
+                "fontSize": {
+                    "displayNameKey": "Prop_Size",
+                    "type": {
+                        "formatting": {
+                            "fontSize": true
+                        }
+                    }
+                },
+                "bold": {
+                    "displayNameKey": "Prop_Font",
                     "type": {
                         "bool": true
                     }
                 },
-                "showLegend": {
+                "italic": {
+                    "displayNameKey": "Prop_Font",
                     "type": {
                         "bool": true
+                    }
+                },
+                "underline": {
+                    "displayNameKey": "Prop_Font",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "labelColor": {
+                    "displayNameKey": "Prop_Color",
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
+                    }
+                },
+                "lineColor": {
+                    "displayNameKey": "Prop_LineColor",
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
+                    }
+                },
+                "lineWidth": {
+                    "displayNameKey": "Prop_LineWidth",
+                    "type": {
+                        "numeric": true
+                    }
+                }
+            }
+        },
+        "labels": {
+            "displayNameKey": "Card_Labels",
+            "properties": {
+                "show": {
+                    "displayNameKey": "Prop_Show",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "position": {
+                    "displayNameKey": "Prop_Position",
+                    "type": {
+                        "enumeration": [
+                            {
+                                "value": "above",
+                                "displayName": "Above",
+                                "displayNameKey": "Enum_Above"
+                            },
+                            {
+                                "value": "below",
+                                "displayName": "Below",
+                                "displayNameKey": "Enum_Below"
+                            },
+                            {
+                                "value": "alternate",
+                                "displayName": "Alternate",
+                                "displayNameKey": "Enum_Alternate"
+                            }
+                        ]
+                    }
+                },
+                "leaderLines": {
+                    "displayNameKey": "Prop_LeaderLines",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "maxRows": {
+                    "displayNameKey": "Prop_MaxRows",
+                    "type": {
+                        "numeric": true
+                    }
+                },
+                "fontFamily": {
+                    "displayNameKey": "Prop_Font",
+                    "type": {
+                        "formatting": {
+                            "fontFamily": true
+                        }
+                    }
+                },
+                "fontSize": {
+                    "displayNameKey": "Prop_Size",
+                    "type": {
+                        "formatting": {
+                            "fontSize": true
+                        }
+                    }
+                },
+                "bold": {
+                    "displayNameKey": "Prop_Font",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "italic": {
+                    "displayNameKey": "Prop_Font",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "underline": {
+                    "displayNameKey": "Prop_Font",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "labelColor": {
+                    "displayNameKey": "Prop_Color",
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "todayLine": {
+            "displayNameKey": "Card_TodayLine",
+            "properties": {
+                "show": {
+                    "displayNameKey": "Prop_Show",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "lineColor": {
+                    "displayNameKey": "Prop_Color",
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
+                    }
+                },
+                "lineStyle": {
+                    "displayNameKey": "Prop_LineStyle",
+                    "type": {
+                        "enumeration": [
+                            {
+                                "value": "solid",
+                                "displayName": "Solid",
+                                "displayNameKey": "Enum_Solid"
+                            },
+                            {
+                                "value": "dashed",
+                                "displayName": "Dashed",
+                                "displayNameKey": "Enum_Dashed"
+                            },
+                            {
+                                "value": "dotted",
+                                "displayName": "Dotted",
+                                "displayNameKey": "Enum_Dotted"
+                            }
+                        ]
                     }
                 }
             }
@@ -64,6 +463,9 @@
                         "max": 1
                     },
                     "event": {
+                        "max": 1
+                    },
+                    "legend": {
                         "max": 1
                     }
                 }
@@ -83,6 +485,11 @@
                         },
                         {
                             "for": {
+                                "in": "legend"
+                            }
+                        },
+                        {
+                            "for": {
                                 "in": "tooltip"
                             }
                         }
@@ -94,7 +501,35 @@
                     }
                 }
             }
+        },
+        {
+            "categorical": {
+                "categories": {
+                    "for": {
+                        "in": "legend"
+                    },
+                    "dataReductionAlgorithm": {
+                        "top": {
+                            "count": 1000
+                        }
+                    }
+                }
+            }
         }
     ],
+    "tooltips": {
+        "supportedTypes": {
+            "default": true,
+            "canvas": true
+        },
+        "roles": [
+            "tooltip"
+        ],
+        "supportEnhancedTooltips": true
+    },
+    "supportsKeyboardFocus": true,
+    "supportsLandingPage": true,
+    "supportsEmptyDataView": true,
+    "supportsMultiVisualSelection": true,
     "privileges": []
 }

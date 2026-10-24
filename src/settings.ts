@@ -29,76 +29,154 @@
 import powerbi from "powerbi-visuals-api";
 import { formattingSettings } from "powerbi-visuals-utils-formattingmodel";
 
+import CompositeCard = formattingSettings.CompositeCard;
 import FormattingSettingsCard = formattingSettings.SimpleCard;
-import FormattingSettingsSlice = formattingSettings.Slice;
 import FormattingSettingsModel = formattingSettings.Model;
+import FormattingSettingsSlice = formattingSettings.Slice;
+import Group = formattingSettings.Group;
+import ValidatorType = powerbi.visuals.ValidatorType;
 
-export const MIN_SCALING = 0.5;
-export const MAX_SCALING = 3;
+// Power BI defaults: Segoe UI, secondary text color and neutral axis color of the default theme.
+export const DEFAULT_FONT_FAMILY = "\"Segoe UI\", wf_segoe-ui_normal, helvetica, arial, sans-serif";
+export const DEFAULT_TEXT_COLOR = "#605E5C";
+export const DEFAULT_LINE_COLOR = "#C8C6C4";
+export const DEFAULT_TODAY_COLOR = "#D64550";
 
-/**
- * Timeline Formatting Card
- */
-class TimelineCardSettings extends FormattingSettingsCard {
-    scaling = new formattingSettings.NumUpDown({
-        name: "scaling",
-        displayName: "Scaling",
-        value: 1,
+export type LegendPosition = "Top" | "Bottom" | "Left" | "Right" | "TopCenter" | "BottomCenter" | "LeftCenter" | "RightCenter";
+export type MarkerShape = "circle" | "square" | "diamond" | "triangle" | "invertedTriangle" | "cross" | "star" | "hexagon";
+export type LabelPosition = "above" | "below" | "alternate";
+export type DateLabelMode = "auto" | "eventDates" | "startEnd";
+export type LineStyle = "solid" | "dashed" | "dotted";
+
+function createFontControl(defaultFontSize: number): formattingSettings.FontControl {
+    return new formattingSettings.FontControl({
+        name: "font",
+        displayNameKey: "Prop_Font",
+        fontFamily: new formattingSettings.FontPicker({ name: "fontFamily", value: DEFAULT_FONT_FAMILY }),
+        fontSize: new formattingSettings.NumUpDown({
+            name: "fontSize",
+            value: defaultFontSize,
+            options: {
+                minValue: { type: ValidatorType.Min, value: 6 },
+                maxValue: { type: ValidatorType.Max, value: 40 }
+            }
+        }),
+        bold: new formattingSettings.ToggleSwitch({ name: "bold", value: false }),
+        italic: new formattingSettings.ToggleSwitch({ name: "italic", value: false }),
+        underline: new formattingSettings.ToggleSwitch({ name: "underline", value: false })
+    });
+}
+
+function createColorPicker(name: string, displayNameKey: string, color: string): formattingSettings.ColorPicker {
+    return new formattingSettings.ColorPicker({ name, displayNameKey, value: { value: color } });
+}
+
+function createNumUpDown(name: string, displayNameKey: string, value: number, min: number, max: number): formattingSettings.NumUpDown {
+    return new formattingSettings.NumUpDown({
+        name,
+        displayNameKey,
+        value,
         options: {
-            minValue: { type: powerbi.visuals.ValidatorType.Min, value: MIN_SCALING },
-            maxValue: { type: powerbi.visuals.ValidatorType.Max, value: MAX_SCALING }
+            minValue: { type: ValidatorType.Min, value: min },
+            maxValue: { type: ValidatorType.Max, value: max }
         }
     });
+}
 
-    symbolColor = new formattingSettings.ColorPicker({
-        name: "symbolColor",
-        displayName: "Symbol color",
-        value: { value: "#2563eb" }
-    });
+class LegendCard extends CompositeCard {
+    show = new formattingSettings.ToggleSwitch({ name: "show", displayNameKey: "Prop_Show", value: true });
+    position = new formattingSettings.AutoDropdown({ name: "position", displayNameKey: "Prop_Position", value: "Top" });
+    showTitle = new formattingSettings.ToggleSwitch({ name: "showTitle", displayNameKey: "Prop_Title", value: true });
+    titleText = new formattingSettings.TextInput({ name: "titleText", displayNameKey: "Prop_TitleText", value: "", placeholder: "" });
+    font = createFontControl(9);
+    labelColor = createColorPicker("labelColor", "Prop_Color", DEFAULT_TEXT_COLOR);
 
-    showEventLabels = new formattingSettings.ToggleSwitch({
-        name: "showEventLabels",
-        displayName: "Show event names",
-        value: true
-    });
-
-    showDates = new formattingSettings.ToggleSwitch({
-        name: "showDates",
-        displayName: "Show dates",
-        value: false
-    });
-
-    useEventSymbols = new formattingSettings.ToggleSwitch({
-        name: "useEventSymbols",
-        displayName: "Use event symbols",
-        value: false
-    });
-
-    showLegend = new formattingSettings.ToggleSwitch({
-        name: "showLegend",
-        displayName: "Show legend",
-        value: false
-    });
-
-    name: string = "timeline";
-    displayName: string = "Timeline";
-    slices: Array<FormattingSettingsSlice> = [
-        this.scaling,
-        this.symbolColor,
-        this.showEventLabels,
-        this.showDates,
-        this.useEventSymbols,
-        this.showLegend
+    name: string = "legend";
+    displayNameKey: string = "Card_Legend";
+    topLevelSlice = this.show;
+    groups: Group[] = [
+        new Group({ name: "legendOptions", displayNameKey: "Group_Options", slices: [this.position] }),
+        new Group({ name: "legendText", displayNameKey: "Group_Text", slices: [this.font, this.labelColor] }),
+        new Group({ name: "legendTitle", displayNameKey: "Group_Title", topLevelSlice: this.showTitle, slices: [this.titleText] })
     ];
 }
 
 /**
-* visual settings model class
-*
-*/
-export class VisualFormattingSettingsModel extends FormattingSettingsModel {
-    // Create formatting settings model formatting cards
-    timelineCard = new TimelineCardSettings();
+ * The per-legend-value color pickers are added at runtime, once the legend values are known.
+ */
+class ColorsCard extends FormattingSettingsCard {
+    defaultColor = createColorPicker("defaultColor", "Prop_DefaultColor", "");
 
-    cards = [this.timelineCard];
+    name: string = "colors";
+    displayNameKey: string = "Card_Colors";
+    slices: Array<FormattingSettingsSlice> = [this.defaultColor];
+}
+
+class MarkersCard extends FormattingSettingsCard {
+    shape = new formattingSettings.AutoDropdown({ name: "shape", displayNameKey: "Prop_Shape", value: "circle" });
+    shapeByEvent = new formattingSettings.ToggleSwitch({ name: "shapeByEvent", displayNameKey: "Prop_ShapeByEvent", value: false });
+    size = createNumUpDown("size", "Prop_Size", 12, 4, 40);
+
+    name: string = "markers";
+    displayNameKey: string = "Card_Markers";
+    slices: Array<FormattingSettingsSlice> = [this.shape, this.shapeByEvent, this.size];
+}
+
+class DateAxisCard extends CompositeCard {
+    show = new formattingSettings.ToggleSwitch({ name: "show", displayNameKey: "Prop_Show", value: true });
+    labelMode = new formattingSettings.AutoDropdown({ name: "labelMode", displayNameKey: "Prop_LabelMode", value: "auto" });
+    font = createFontControl(9);
+    labelColor = createColorPicker("labelColor", "Prop_Color", DEFAULT_TEXT_COLOR);
+    lineColor = createColorPicker("lineColor", "Prop_LineColor", DEFAULT_LINE_COLOR);
+    lineWidth = createNumUpDown("lineWidth", "Prop_LineWidth", 2, 1, 10);
+
+    name: string = "dateAxis";
+    displayNameKey: string = "Card_DateAxis";
+    topLevelSlice = this.show;
+    groups: Group[] = [
+        new Group({ name: "dateAxisValues", displayNameKey: "Group_Values", slices: [this.labelMode, this.font, this.labelColor] }),
+        new Group({ name: "dateAxisLine", displayNameKey: "Group_Line", slices: [this.lineColor, this.lineWidth] })
+    ];
+}
+
+class LabelsCard extends CompositeCard {
+    show = new formattingSettings.ToggleSwitch({ name: "show", displayNameKey: "Prop_Show", value: true });
+    position = new formattingSettings.AutoDropdown({ name: "position", displayNameKey: "Prop_Position", value: "above" });
+    leaderLines = new formattingSettings.ToggleSwitch({ name: "leaderLines", displayNameKey: "Prop_LeaderLines", value: true });
+    maxRows = createNumUpDown("maxRows", "Prop_MaxRows", 4, 1, 20);
+    font = createFontControl(9);
+    labelColor = createColorPicker("labelColor", "Prop_Color", DEFAULT_TEXT_COLOR);
+
+    name: string = "labels";
+    displayNameKey: string = "Card_Labels";
+    topLevelSlice = this.show;
+    groups: Group[] = [
+        new Group({ name: "labelsOptions", displayNameKey: "Group_Options", slices: [this.position, this.leaderLines, this.maxRows] }),
+        new Group({ name: "labelsValues", displayNameKey: "Group_Values", slices: [this.font, this.labelColor] })
+    ];
+}
+
+class TodayLineCard extends FormattingSettingsCard {
+    show = new formattingSettings.ToggleSwitch({ name: "show", displayNameKey: "Prop_Show", value: false });
+    lineColor = createColorPicker("lineColor", "Prop_Color", DEFAULT_TODAY_COLOR);
+    lineStyle = new formattingSettings.AutoDropdown({ name: "lineStyle", displayNameKey: "Prop_LineStyle", value: "dashed" });
+
+    name: string = "todayLine";
+    displayNameKey: string = "Card_TodayLine";
+    topLevelSlice = this.show;
+    slices: Array<FormattingSettingsSlice> = [this.lineColor, this.lineStyle];
+}
+
+/**
+ * Visual settings model class
+ */
+export class VisualFormattingSettingsModel extends FormattingSettingsModel {
+    legend = new LegendCard();
+    colors = new ColorsCard();
+    markers = new MarkersCard();
+    dateAxis = new DateAxisCard();
+    labels = new LabelsCard();
+    todayLine = new TodayLineCard();
+
+    cards = [this.legend, this.colors, this.markers, this.dateAxis, this.labels, this.todayLine];
 }
