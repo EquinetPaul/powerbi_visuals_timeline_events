@@ -26,11 +26,15 @@
 
 "use strict";
 
+import powerbi from "powerbi-visuals-api";
 import { formattingSettings } from "powerbi-visuals-utils-formattingmodel";
 
 import FormattingSettingsCard = formattingSettings.SimpleCard;
 import FormattingSettingsSlice = formattingSettings.Slice;
 import FormattingSettingsModel = formattingSettings.Model;
+
+export const MIN_SCALING = 0.5;
+export const MAX_SCALING = 3;
 
 /**
  * Timeline Formatting Card
@@ -39,7 +43,11 @@ class TimelineCardSettings extends FormattingSettingsCard {
     scaling = new formattingSettings.NumUpDown({
         name: "scaling",
         displayName: "Scaling",
-        value: 1
+        value: 1,
+        options: {
+            minValue: { type: powerbi.visuals.ValidatorType.Min, value: MIN_SCALING },
+            maxValue: { type: powerbi.visuals.ValidatorType.Max, value: MAX_SCALING }
+        }
     });
 
     symbolColor = new formattingSettings.ColorPicker({

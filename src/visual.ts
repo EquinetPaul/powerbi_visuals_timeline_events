@@ -27,13 +27,21 @@
 
 import powerbi from "powerbi-visuals-api";
 import { FormattingSettingsService } from "powerbi-visuals-utils-formattingmodel";
+import { interfaces, textMeasurementService, valueFormatter } from "powerbi-visuals-utils-formattingutils";
 import "./../style/visual.less";
 
 import VisualConstructorOptions = powerbi.extensibility.visual.VisualConstructorOptions;
 import VisualUpdateOptions = powerbi.extensibility.visual.VisualUpdateOptions;
 import IVisual = powerbi.extensibility.visual.IVisual;
+import IValueFormatter = valueFormatter.IValueFormatter;
+import TextProperties = interfaces.TextProperties;
 
-import { VisualFormattingSettingsModel } from "./settings";
+import { MAX_SCALING, MIN_SCALING, VisualFormattingSettingsModel } from "./settings";
+
+// Number of distinct shapes available when "Use event symbols" is on.
+const SYMBOL_SHAPE_COUNT = 8;
+// Minimum distance kept between a label and the left/right edge of the visual.
+const LABEL_EDGE_MARGIN = 2;
 
 export class Visual implements IVisual {
     private target: HTMLElement;
@@ -43,11 +51,15 @@ export class Visual implements IVisual {
     private emptyState: HTMLDivElement;
     private formattingSettings: VisualFormattingSettingsModel;
     private formattingSettingsService: FormattingSettingsService;
+    private locale: string;
+    private dateFormatter: IValueFormatter | null = null;
+    private fontFamily = "";
 
     constructor(options: VisualConstructorOptions) {
         this.formattingSettingsService = new FormattingSettingsService();
+        this.locale = options.host.locale;
         this.target = options.element;
-        this.target.innerHTML = "";
+        this.target.replaceChildren();
 
         this.container = document.createElement("div");
         this.container.className = "timeline-visual";
@@ -68,15 +80,15 @@ export class Visual implements IVisual {
     }
 
     public update(options: VisualUpdateOptions) {
-        this.formattingSettings = this.formattingSettingsService.populateFormattingSettingsModel(VisualFormattingSettingsModel, options.dataViews[0]);
         const dataView = options.dataViews && options.dataViews[0];
+        this.formattingSettings = this.formattingSettingsService.populateFormattingSettingsModel(VisualFormattingSettingsModel, dataView);
         if (!dataView || !dataView.table || !dataView.table.rows || dataView.table.rows.length === 0) {
             this.renderEmpty("Ajoutez des champs Date, Event Name et Tooltip.");
             return;
         }
 
         const columns = dataView.table.columns || [];
-        const dateColumnIndex = columns.findIndex((column) => column.roles && column.roles.date);
+        const dateColumnIndex = this.findDateColumnIndex(columns);
         const eventColumnIndex = columns.findIndex((column) => column.roles && column.roles.event);
         const tooltipColumnIndexes = columns
             .map((column, index) => (column.roles && column.roles.tooltip ? index : -1))
@@ -87,16 +99,29 @@ export class Visual implements IVisual {
             return;
         }
 
+        const dateColumn = columns[dateColumnIndex];
+        if (!this.isUsableDateColumn(dateColumn)) {
+            this.renderEmpty(
+                "Le champ Date doit contenir une date. Si une hiérarchie de dates est utilisée, "
+                + "cliquez sur la flèche du champ Date et choisissez le nom de la colonne au lieu de « Hiérarchie de dates »."
+            );
+            return;
+        }
+
+        this.dateFormatter = dateColumn.format ? this.createFormatter(dateColumn.format) : null;
+        const tooltipFormatters = tooltipColumnIndexes.map((index) => this.createFormatter(columns[index].format));
+
         const grouped = this.groupByDate(
             dataView.table.rows,
             columns,
             dateColumnIndex,
             eventColumnIndex,
-            tooltipColumnIndexes
+            tooltipColumnIndexes,
+            tooltipFormatters
         );
 
         if (grouped.length === 0) {
-            this.renderEmpty("Aucune donnée exploitable.");
+            this.renderEmpty("Aucune date valide dans le champ Date.");
             return;
         }
 
@@ -118,7 +143,7 @@ export class Visual implements IVisual {
 
     /**
      * Returns properties pane formatting model content hierarchies, properties and latest formatting values, Then populate properties pane.
-     * This method is called once every time we open properties pane or when the user edit any format property. 
+     * This method is called once every time we open properties pane or when the user edit any format property.
      */
     public getFormattingModel(): powerbi.visuals.FormattingModel {
         return this.formattingSettingsService.buildFormattingModel(this.formattingSettings);
@@ -139,61 +164,76 @@ export class Visual implements IVisual {
     ): void {
         this.emptyState.style.display = "none";
         this.svg.style.display = "block";
-        this.legend.style.display = "none";
+        this.fontFamily = window.getComputedStyle(this.svg).fontFamily;
 
         const safeWidth = Math.max(width, 1);
         const safeHeight = Math.max(height, 1);
         const padding = 24;
         const scale = options.scaling;
-        const eventNames = options.useEventSymbols && options.showLegend ? this.getUniqueEventNames(groups) : [];
-        const legendHeight = eventNames.length > 0
-            ? this.estimateLegendHeight(eventNames, scale, safeWidth, padding)
-            : 0;
+        const eventNames = this.getUniqueEventNames(groups);
+        const symbolVariants = this.getSymbolVariants(eventNames);
+        if (options.useEventSymbols && options.showLegend) {
+            this.renderLegend(eventNames, symbolVariants, options.symbolColor, scale);
+        } else {
+            this.legend.style.display = "none";
+        }
+        // Measure the rendered legend so the SVG gets exactly the remaining height.
+        const legendHeight = this.legend.style.display === "none" ? 0 : this.legend.offsetHeight;
         const svgHeight = Math.max(safeHeight - legendHeight, 1);
         const minDate = groups[0].date;
         const maxDate = groups[groups.length - 1].date;
         const minMs = minDate.getTime();
-        const maxMs = maxDate.getTime();
-        const rangeMs = Math.max(maxMs - minMs, 1);
+        const rangeMs = maxDate.getTime() - minMs;
         const innerWidth = Math.max(safeWidth - padding * 2, 1);
         const baseFontSize = 12 * scale;
         const minLabelWidth = 40 * scale;
+        const maxLabelWidth = Math.max(safeWidth - LABEL_EDGE_MARGIN * 2, 1);
 
-        const eventPoints = this.buildEventPoints(groups, minMs, rangeMs, innerWidth, padding, scale);
-        const sortedByX = [...eventPoints].sort((a, b) => a.x - b.x);
+        const groupPoints = this.buildGroupPoints(groups, minMs, rangeMs, innerWidth, padding, scale);
+        const labelWidths = this.getGroupLabelWidths(groupPoints, minLabelWidth, maxLabelWidth);
 
         const eventLabelLayout = options.showEventLabels
             ? this.buildLabelLayouts(
-                sortedByX,
-                innerWidth,
+                groupPoints.flatMap((groupPoint, groupIndex) => groupPoint.eventPoints.map((eventPoint) => ({
+                    x: eventPoint.x,
+                    maxWidth: labelWidths[groupIndex],
+                    text: eventPoint.entry.eventName
+                }))),
+                safeWidth,
                 baseFontSize,
-                minLabelWidth,
-                scale,
-                (point) => point.entry.eventName
+                scale
             )
             : { layouts: [], rows: 0 };
 
+        // One date label per date, centred under that date's symbols.
         const dateLabelLayout = options.showDates
             ? this.buildLabelLayouts(
-                sortedByX,
-                innerWidth,
+                groupPoints.map((groupPoint, groupIndex) => ({
+                    x: groupPoint.x,
+                    maxWidth: labelWidths[groupIndex],
+                    text: this.formatDate(groupPoint.group.date)
+                })),
+                safeWidth,
                 baseFontSize,
-                minLabelWidth,
-                scale,
-                (point) => this.formatDate(point.group.date)
+                scale
             )
             : { layouts: [], rows: 0 };
 
         const lineHeight = baseFontSize * 1.2;
         const labelOffset = 14 * scale;
+        const boundsLabelOffset = options.showEventLabels ? labelOffset : 10 * scale;
         const eventRows = eventLabelLayout.rows;
         const dateRows = dateLabelLayout.rows;
-        const topNeeded = options.showEventLabels && eventRows > 0
+        const eventLabelsTop = eventRows > 0
             ? labelOffset + (eventRows - 1) * lineHeight + baseFontSize
             : 0;
-        const bottomNeeded = options.showDates && dateRows > 0
+        const dateLabelsBottom = dateRows > 0
             ? labelOffset + (dateRows - 1) * lineHeight + baseFontSize
             : 0;
+        // Without "Show dates", the min/max dates are drawn below the line (or above it when event names are hidden).
+        const boundsLabelsSpace = options.showDates ? 0 : boundsLabelOffset + baseFontSize;
+        const topNeeded = Math.max(eventLabelsTop, !options.showDates && !options.showEventLabels ? boundsLabelsSpace : 0);
+        const bottomNeeded = Math.max(dateLabelsBottom, !options.showDates && options.showEventLabels ? boundsLabelsSpace : 0);
         const minLineY = padding + topNeeded;
         const maxLineY = svgHeight - padding - bottomNeeded;
         let lineY = svgHeight / 2;
@@ -219,8 +259,7 @@ export class Visual implements IVisual {
         this.svg.appendChild(line);
 
         if (!options.showDates) {
-            const dateLabelOffset = options.showEventLabels ? labelOffset : 10 * scale;
-            const dateLabelY = options.showEventLabels ? lineY + dateLabelOffset : lineY - dateLabelOffset;
+            const dateLabelY = options.showEventLabels ? lineY + boundsLabelOffset : lineY - boundsLabelOffset;
 
             const minLabel = document.createElementNS("http://www.w3.org/2000/svg", "text");
             minLabel.setAttribute("x", padding.toString());
@@ -240,18 +279,15 @@ export class Visual implements IVisual {
             this.svg.appendChild(maxLabel);
         }
 
-        eventPoints.forEach((eventPoint) => {
-            const symbol = this.createSymbol(
-                eventPoint,
-                lineY,
-                scale,
-                options.symbolColor,
-                options.useEventSymbols
-            );
-            const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
-            title.textContent = this.buildTooltip(eventPoint.group);
-            symbol.appendChild(title);
-            this.svg.appendChild(symbol);
+        groupPoints.forEach((groupPoint) => {
+            groupPoint.eventPoints.forEach((eventPoint) => {
+                const variant = options.useEventSymbols ? symbolVariants.get(eventPoint.entry.eventName) ?? 0 : 0;
+                const symbol = this.createShape(variant, eventPoint.x, lineY, 6 * scale, options.symbolColor);
+                const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+                title.textContent = this.buildTooltip(eventPoint);
+                symbol.appendChild(title);
+                this.svg.appendChild(symbol);
+            });
         });
 
         if (options.showEventLabels) {
@@ -259,7 +295,7 @@ export class Visual implements IVisual {
                 const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
                 label.setAttribute("class", "timeline-label");
                 label.setAttribute("text-anchor", "middle");
-                label.setAttribute("x", layout.point.x.toString());
+                label.setAttribute("x", layout.x.toString());
                 label.setAttribute("y", (lineY - (labelOffset + layout.rowIndex * lineHeight)).toString());
                 label.setAttribute("style", `font-size:${layout.fontSize}px`);
                 label.textContent = layout.text;
@@ -272,17 +308,42 @@ export class Visual implements IVisual {
                 const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
                 label.setAttribute("class", "timeline-label");
                 label.setAttribute("text-anchor", "middle");
-                label.setAttribute("x", layout.point.x.toString());
+                label.setAttribute("x", layout.x.toString());
                 label.setAttribute("y", (lineY + (labelOffset + layout.rowIndex * lineHeight)).toString());
                 label.setAttribute("style", `font-size:${layout.fontSize}px`);
                 label.textContent = layout.text;
                 this.svg.appendChild(label);
             });
         }
+    }
 
-        if (options.useEventSymbols && options.showLegend) {
-            this.renderLegend(eventNames, options.symbolColor, scale);
+    /**
+     * Picks the column of the Date role, preferring a real date column when several are present.
+     */
+    private findDateColumnIndex(columns: powerbi.DataViewMetadataColumn[]): number {
+        const dateColumnIndexes = columns
+            .map((column, index) => (column.roles && column.roles.date ? index : -1))
+            .filter((index) => index !== -1);
+        const dateTimeIndex = dateColumnIndexes.find((index) => columns[index].type && columns[index].type.dateTime);
+        if (dateTimeIndex !== undefined) {
+            return dateTimeIndex;
         }
+        return dateColumnIndexes.length > 0 ? dateColumnIndexes[0] : -1;
+    }
+
+    /**
+     * Accepts date and text columns. Rejects the levels of Power BI's automatic date hierarchy
+     * (Year, Quarter, Month, Day), which are numbers or month names rather than dates.
+     */
+    private isUsableDateColumn(column: powerbi.DataViewMetadataColumn): boolean {
+        const type = column.type;
+        if (type && type.dateTime) {
+            return true;
+        }
+        if ((column.queryName || "").indexOf(".Variation.") !== -1) {
+            return false;
+        }
+        return !type || !!type.text;
     }
 
     private groupByDate(
@@ -290,7 +351,8 @@ export class Visual implements IVisual {
         columns: powerbi.DataViewMetadataColumn[],
         dateColumnIndex: number,
         eventColumnIndex: number,
-        tooltipColumnIndexes: number[]
+        tooltipColumnIndexes: number[],
+        tooltipFormatters: IValueFormatter[]
     ): TimelineGroup[] {
         const groups = new Map<number, TimelineGroup>();
 
@@ -305,14 +367,14 @@ export class Visual implements IVisual {
             const eventName = eventValue === null || eventValue === undefined ? "(blank)" : String(eventValue);
 
             const tooltipFields: TooltipField[] = tooltipColumnIndexes
-                .map((index) => {
+                .map((index, position) => {
                     const value = row[index];
                     if (value === null || value === undefined || value === "") {
                         return null;
                     }
                     return {
                         label: columns[index].displayName,
-                        value: this.formatValue(value)
+                        value: tooltipFormatters[position].format(value)
                     };
                 })
                 .filter((field): field is TooltipField => field !== null);
@@ -337,118 +399,97 @@ export class Visual implements IVisual {
         return Array.from(groups.values()).sort((a, b) => a.date.getTime() - b.date.getTime());
     }
 
-    private buildTooltip(group: TimelineGroup): string {
-        const lines: string[] = [];
-        lines.push(this.formatDate(group.date));
-
-        group.entries.forEach((entry) => {
-            if (entry.tooltipFields.length === 0) {
-                lines.push(entry.eventName);
-                return;
-            }
-            const tooltipValues = entry.tooltipFields
-                .map((field) => `${field.label}: ${field.value}`)
-                .join(" | ");
-            lines.push(`${entry.eventName} — ${tooltipValues}`);
+    private buildTooltip(eventPoint: TimelineEventPoint): string {
+        const lines = [this.formatDate(eventPoint.group.date), eventPoint.entry.eventName];
+        eventPoint.entry.tooltipFields.forEach((field) => {
+            lines.push(`${field.label}: ${field.value}`);
         });
-
         return lines.join("\n");
     }
 
-    private buildEventPoints(
+    private buildGroupPoints(
         groups: TimelineGroup[],
         minMs: number,
         rangeMs: number,
         innerWidth: number,
         padding: number,
         scale: number
-    ): TimelineEventPoint[] {
-        const points: TimelineEventPoint[] = [];
+    ): TimelineGroupPoint[] {
         const jitter = 14 * scale;
-        groups.forEach((group) => {
-            const baseX = padding + ((group.date.getTime() - minMs) / rangeMs) * innerWidth;
+        const minX = padding;
+        const maxX = padding + innerWidth;
+        return groups.map((group) => {
+            const baseX = rangeMs > 0
+                ? padding + ((group.date.getTime() - minMs) / rangeMs) * innerWidth
+                : padding + innerWidth / 2;
             const count = group.entries.length;
-            group.entries.forEach((entry, index) => {
-                const offset = count > 1 ? (index - (count - 1) / 2) * jitter : 0;
-                const x = this.clamp(baseX + offset, padding, padding + innerWidth);
-                points.push({
-                    group,
-                    entry,
-                    x
-                });
-            });
+            // Same-date events are spread around their date. The whole cluster is shifted inward
+            // at the edges (instead of clamping each symbol) so that no two symbols share the same x.
+            const step = count > 1 ? Math.min(jitter, innerWidth / (count - 1)) : 0;
+            const halfSpread = (step * (count - 1)) / 2;
+            const x = this.clamp(baseX, minX + halfSpread, maxX - halfSpread);
+            const groupPoint: TimelineGroupPoint = { group, x, eventPoints: [] };
+            groupPoint.eventPoints = group.entries.map((entry, index) => ({
+                group,
+                entry,
+                x: x - halfSpread + index * step
+            }));
+            return groupPoint;
         });
-        return points;
     }
 
-    private createSymbol(
-        eventPoint: TimelineEventPoint,
-        lineY: number,
-        scale: number,
-        color: string,
-        useEventSymbols: boolean
-    ): SVGElement {
-        const size = 6 * scale;
-        const colorClass = "timeline-event";
-        if (!useEventSymbols) {
-            const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-            circle.setAttribute("cx", eventPoint.x.toString());
-            circle.setAttribute("cy", lineY.toString());
-            circle.setAttribute("r", size.toString());
-            circle.setAttribute("class", colorClass);
-            circle.setAttribute("style", `fill:${color}`);
-            return circle;
+    private createShape(variant: number, cx: number, cy: number, size: number, color: string): SVGElement {
+        let shape: SVGElement;
+        if (variant === 0) {
+            shape = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            shape.setAttribute("cx", cx.toString());
+            shape.setAttribute("cy", cy.toString());
+            shape.setAttribute("r", size.toString());
+        } else {
+            shape = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+            const points = this.getShapePoints(variant, cx, cy, size)
+                .map(([x, y]) => `${x},${y}`)
+                .join(" ");
+            shape.setAttribute("points", points);
         }
-
-        const variant = this.getSymbolVariant(eventPoint.entry.eventName);
-        if (variant === 1) {
-            const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-            rect.setAttribute("x", (eventPoint.x - size).toString());
-            rect.setAttribute("y", (lineY - size).toString());
-            rect.setAttribute("width", (size * 2).toString());
-            rect.setAttribute("height", (size * 2).toString());
-            rect.setAttribute("class", colorClass);
-            rect.setAttribute("style", `fill:${color}`);
-            return rect;
-        }
-
-        if (variant === 2) {
-            const diamond = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-            const points = [
-                `${eventPoint.x},${lineY - size}`,
-                `${eventPoint.x + size},${lineY}`,
-                `${eventPoint.x},${lineY + size}`,
-                `${eventPoint.x - size},${lineY}`
-            ].join(" ");
-            diamond.setAttribute("points", points);
-            diamond.setAttribute("class", colorClass);
-            diamond.setAttribute("style", `fill:${color}`);
-            return diamond;
-        }
-
-        if (variant === 3) {
-            const triangle = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-            const points = [
-                `${eventPoint.x},${lineY - size}`,
-                `${eventPoint.x + size},${lineY + size}`,
-                `${eventPoint.x - size},${lineY + size}`
-            ].join(" ");
-            triangle.setAttribute("points", points);
-            triangle.setAttribute("class", colorClass);
-            triangle.setAttribute("style", `fill:${color}`);
-            return triangle;
-        }
-
-        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        circle.setAttribute("cx", eventPoint.x.toString());
-        circle.setAttribute("cy", lineY.toString());
-        circle.setAttribute("r", size.toString());
-        circle.setAttribute("class", colorClass);
-        circle.setAttribute("style", `fill:${color}`);
-        return circle;
+        shape.setAttribute("class", "timeline-event");
+        shape.setAttribute("style", `fill:${color}`);
+        return shape;
     }
 
-    private renderLegend(eventNames: string[], color: string, scale: number): void {
+    private getShapePoints(variant: number, cx: number, cy: number, size: number): Array<[number, number]> {
+        switch (variant) {
+            case 1: // square
+                return [[cx - size, cy - size], [cx + size, cy - size], [cx + size, cy + size], [cx - size, cy + size]];
+            case 2: // diamond
+                return [[cx, cy - size], [cx + size, cy], [cx, cy + size], [cx - size, cy]];
+            case 3: // triangle
+                return [[cx, cy - size], [cx + size, cy + size], [cx - size, cy + size]];
+            case 4: // inverted triangle
+                return [[cx - size, cy - size], [cx + size, cy - size], [cx, cy + size]];
+            case 5: { // cross
+                const arm = size / 3;
+                return [
+                    [cx - arm, cy - size], [cx + arm, cy - size], [cx + arm, cy - arm], [cx + size, cy - arm],
+                    [cx + size, cy + arm], [cx + arm, cy + arm], [cx + arm, cy + size], [cx - arm, cy + size],
+                    [cx - arm, cy + arm], [cx - size, cy + arm], [cx - size, cy - arm], [cx - arm, cy - arm]
+                ];
+            }
+            case 6: // star
+                return this.getRadialPoints(cx, cy, 10, (index) => (index % 2 === 0 ? size : size * 0.45));
+            default: // hexagon
+                return this.getRadialPoints(cx, cy, 6, () => size);
+        }
+    }
+
+    private getRadialPoints(cx: number, cy: number, count: number, radius: (index: number) => number): Array<[number, number]> {
+        return Array.from({ length: count }, (_, index): [number, number] => {
+            const angle = -Math.PI / 2 + (index * 2 * Math.PI) / count;
+            return [cx + radius(index) * Math.cos(angle), cy + radius(index) * Math.sin(angle)];
+        });
+    }
+
+    private renderLegend(eventNames: string[], symbolVariants: Map<string, number>, color: string, scale: number): void {
         while (this.legend.firstChild) {
             this.legend.removeChild(this.legend.firstChild);
         }
@@ -476,8 +517,8 @@ export class Visual implements IVisual {
             svg.setAttribute("height", `${16 * scale}`);
             svg.classList.add("timeline-legend-symbol");
 
-            const variant = this.getSymbolVariant(eventName);
-            const symbol = this.createLegendSymbol(variant, 6 * scale, color);
+            const center = 8 * scale;
+            const symbol = this.createShape(symbolVariants.get(eventName) ?? 0, center, center, 6 * scale, color);
             svg.appendChild(symbol);
 
             const label = document.createElement("span");
@@ -494,124 +535,43 @@ export class Visual implements IVisual {
         this.legend.style.display = "block";
     }
 
-    private estimateLegendHeight(eventNames: string[], scale: number, width: number, padding: number): number {
-        const titleHeight = 16 * scale;
-        const rowHeight = 18 * scale;
-        const gapX = 12 * scale;
-        const symbolWidth = 16 * scale;
-        const labelFontSize = 12 * scale;
-        const available = Math.max(width - padding * 2, 1);
-
-        let rowWidth = 0;
-        let rows = 1;
-
-        eventNames.forEach((eventName) => {
-            const labelWidth = this.estimateTextWidth(eventName, labelFontSize);
-            const itemWidth = symbolWidth + (6 * scale) + labelWidth;
-            const nextWidth = rowWidth === 0 ? itemWidth : rowWidth + gapX + itemWidth;
-            if (nextWidth > available && rowWidth > 0) {
-                rows += 1;
-                rowWidth = itemWidth;
-            } else {
-                rowWidth = nextWidth;
-            }
+    /**
+     * Maximum label width for each date: twice the distance to the closest neighbouring date.
+     * Events sharing a date share their date's width; overlapping labels are stacked on rows.
+     */
+    private getGroupLabelWidths(groupPoints: TimelineGroupPoint[], minWidth: number, maxWidth: number): number[] {
+        return groupPoints.map((groupPoint, index) => {
+            const leftGap = index > 0 ? groupPoint.x - groupPoints[index - 1].x : Number.POSITIVE_INFINITY;
+            const rightGap = index < groupPoints.length - 1 ? groupPoints[index + 1].x - groupPoint.x : Number.POSITIVE_INFINITY;
+            return this.clamp(2 * Math.min(leftGap, rightGap), minWidth, maxWidth);
         });
-
-        const paddingY = 10 * scale;
-        return titleHeight + rows * rowHeight + paddingY;
-    }
-
-    private createLegendSymbol(variant: number, size: number, color: string): SVGElement {
-        const center = size + 1;
-        if (variant === 1) {
-            const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-            rect.setAttribute("x", (center - size).toString());
-            rect.setAttribute("y", (center - size).toString());
-            rect.setAttribute("width", (size * 2).toString());
-            rect.setAttribute("height", (size * 2).toString());
-            rect.setAttribute("class", "timeline-event");
-            rect.setAttribute("style", `fill:${color}`);
-            return rect;
-        }
-
-        if (variant === 2) {
-            const diamond = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-            const points = [
-                `${center},${center - size}`,
-                `${center + size},${center}`,
-                `${center},${center + size}`,
-                `${center - size},${center}`
-            ].join(" ");
-            diamond.setAttribute("points", points);
-            diamond.setAttribute("class", "timeline-event");
-            diamond.setAttribute("style", `fill:${color}`);
-            return diamond;
-        }
-
-        if (variant === 3) {
-            const triangle = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
-            const points = [
-                `${center},${center - size}`,
-                `${center + size},${center + size}`,
-                `${center - size},${center + size}`
-            ].join(" ");
-            triangle.setAttribute("points", points);
-            triangle.setAttribute("class", "timeline-event");
-            triangle.setAttribute("style", `fill:${color}`);
-            return triangle;
-        }
-
-        const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        circle.setAttribute("cx", center.toString());
-        circle.setAttribute("cy", center.toString());
-        circle.setAttribute("r", size.toString());
-        circle.setAttribute("class", "timeline-event");
-        circle.setAttribute("style", `fill:${color}`);
-        return circle;
-    }
-
-    private getLabelMaxWidth(
-        point: TimelineEventPoint,
-        sortedPoints: TimelineEventPoint[],
-        minWidth: number,
-        innerWidth: number
-    ): number {
-        const index = sortedPoints.indexOf(point);
-        if (index === -1) {
-            return minWidth;
-        }
-
-        const leftGap = index > 0 ? point.x - sortedPoints[index - 1].x : innerWidth;
-        const rightGap = index < sortedPoints.length - 1 ? sortedPoints[index + 1].x - point.x : innerWidth;
-        const maxWidth = 2 * Math.min(leftGap, rightGap);
-        return Math.max(minWidth, maxWidth);
     }
 
     private buildLabelLayouts(
-        sortedPoints: TimelineEventPoint[],
-        innerWidth: number,
+        items: LabelItem[],
+        visualWidth: number,
         baseFontSize: number,
-        minLabelWidth: number,
-        scale: number,
-        getText: (point: TimelineEventPoint) => string
+        scale: number
     ): LabelLayoutResult {
         const layouts: LabelLayout[] = [];
         const rowEnds: number[] = [];
         const rowPadding = 6 * scale;
 
-        sortedPoints.forEach((point) => {
-            const rawText = getText(point);
-            if (!rawText) {
+        [...items].sort((a, b) => a.x - b.x).forEach((item) => {
+            if (!item.text) {
                 return;
             }
-            const maxWidth = this.getLabelMaxWidth(point, sortedPoints, minLabelWidth, innerWidth);
-            const fitted = this.fitLabelText(rawText, maxWidth, baseFontSize);
+            const fitted = this.fitLabelText(item.text, item.maxWidth, baseFontSize);
             if (!fitted.text) {
                 return;
             }
-            const width = this.estimateTextWidth(fitted.text, fitted.fontSize);
-            const start = point.x - width / 2;
-            const end = point.x + width / 2;
+            const width = this.measureText(fitted.text, fitted.fontSize);
+            // Keep the label inside the visual: labels near an edge are shifted inward.
+            const x = width >= visualWidth - LABEL_EDGE_MARGIN * 2
+                ? visualWidth / 2
+                : this.clamp(item.x, LABEL_EDGE_MARGIN + width / 2, visualWidth - LABEL_EDGE_MARGIN - width / 2);
+            const start = x - width / 2;
+            const end = x + width / 2;
 
             let rowIndex = 0;
             while (rowIndex < rowEnds.length && start <= rowEnds[rowIndex] + rowPadding) {
@@ -625,11 +585,10 @@ export class Visual implements IVisual {
             }
 
             layouts.push({
-                point,
+                x,
                 text: fitted.text,
                 fontSize: fitted.fontSize,
-                rowIndex,
-                width
+                rowIndex
             });
         });
 
@@ -644,52 +603,54 @@ export class Visual implements IVisual {
             return { text: "", fontSize: baseFontSize };
         }
 
-        const avgCharFactor = 0.6;
         let fontSize = baseFontSize;
-        let estimatedWidth = text.length * fontSize * avgCharFactor;
-
-        if (estimatedWidth > maxWidth) {
-            fontSize = Math.max(baseFontSize * 0.75, 8);
-            estimatedWidth = text.length * fontSize * avgCharFactor;
+        if (this.measureText(text, fontSize) > maxWidth) {
+            // Shrink a little before truncating, but never above the base size nor below 8px.
+            fontSize = Math.min(baseFontSize, Math.max(baseFontSize * 0.75, 8));
         }
 
-        if (estimatedWidth > maxWidth) {
-            const maxChars = Math.max(1, Math.floor(maxWidth / (fontSize * avgCharFactor)) - 3);
-            const trimmed = text.slice(0, maxChars).trimEnd();
-            return { text: `${trimmed}...`, fontSize };
+        if (this.measureText(text, fontSize) > maxWidth) {
+            const tailored = textMeasurementService.getTailoredTextOrDefault(this.getTextProperties(text, fontSize), maxWidth);
+            return { text: tailored, fontSize };
         }
 
         return { text, fontSize };
     }
 
-    private estimateTextWidth(text: string, fontSize: number): number {
-        const avgCharFactor = 0.6;
-        return text.length * fontSize * avgCharFactor;
+    private measureText(text: string, fontSize: number): number {
+        return textMeasurementService.measureSvgTextWidth(this.getTextProperties(text, fontSize));
     }
 
-    private formatValue(value: unknown): string {
-        if (value instanceof Date) {
-            return value.toLocaleString();
-        }
-        if (typeof value === "number") {
-            return value.toString();
-        }
-        if (value === null || value === undefined) {
-            return "";
-        }
-        return String(value);
+    private getTextProperties(text: string, fontSize: number): TextProperties {
+        return {
+            text,
+            fontFamily: this.fontFamily,
+            fontSize: `${fontSize}px`
+        };
+    }
+
+    private createFormatter(format: string | undefined): IValueFormatter {
+        return valueFormatter.create({ format, cultureSelector: this.locale });
     }
 
     private formatDate(date: Date): string {
-        return date.toLocaleDateString();
+        if (this.dateFormatter) {
+            return this.dateFormatter.format(date);
+        }
+        return date.toLocaleDateString(this.locale);
     }
 
     private coerceDate(value: unknown): Date | null {
         if (value instanceof Date) {
             return value;
         }
-        if (typeof value === "string" || typeof value === "number") {
-            const parsed = new Date(value);
+        if (typeof value === "string") {
+            // Date-only ISO strings ("2026-01-05") are parsed as local dates: new Date() would read
+            // them as UTC midnight and display the previous day in time zones behind UTC.
+            const isoDate = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+            const parsed = isoDate
+                ? new Date(Number(isoDate[1]), Number(isoDate[2]) - 1, Number(isoDate[3]))
+                : new Date(value);
             if (!Number.isNaN(parsed.getTime())) {
                 return parsed;
             }
@@ -701,17 +662,16 @@ export class Visual implements IVisual {
         return Math.min(Math.max(value, min), max);
     }
 
-    private hashString(value: string): number {
-        let hash = 0;
-        for (let i = 0; i < value.length; i++) {
-            hash = (hash << 5) - hash + value.charCodeAt(i);
-            hash |= 0;
-        }
-        return Math.abs(hash);
-    }
-
-    private getSymbolVariant(eventName: string): number {
-        return this.hashString(eventName) % 4;
+    /**
+     * Shapes are assigned in alphabetical order of event names, so up to SYMBOL_SHAPE_COUNT
+     * different events always get different shapes.
+     */
+    private getSymbolVariants(eventNames: string[]): Map<string, number> {
+        const variants = new Map<string, number>();
+        [...eventNames]
+            .sort((a, b) => a.localeCompare(b))
+            .forEach((eventName, index) => variants.set(eventName, index % SYMBOL_SHAPE_COUNT));
+        return variants;
     }
 
     private getUniqueEventNames(groups: TimelineGroup[]): string[] {
@@ -729,10 +689,10 @@ export class Visual implements IVisual {
     }
 
     private normalizeScale(value: number): number {
-        if (!Number.isFinite(value) || value <= 0) {
+        if (!Number.isFinite(value)) {
             return 1;
         }
-        return Math.min(Math.max(value, 0.5), 3);
+        return this.clamp(value, MIN_SCALING, MAX_SCALING);
     }
 
     private normalizeColor(value: string | undefined): string {
@@ -764,6 +724,12 @@ interface TimelineEventPoint {
     x: number;
 }
 
+interface TimelineGroupPoint {
+    group: TimelineGroup;
+    x: number;
+    eventPoints: TimelineEventPoint[];
+}
+
 interface TimelineRenderOptions {
     scaling: number;
     symbolColor: string;
@@ -778,12 +744,17 @@ interface FittedLabel {
     fontSize: number;
 }
 
+interface LabelItem {
+    x: number;
+    maxWidth: number;
+    text: string;
+}
+
 interface LabelLayout {
-    point: TimelineEventPoint;
+    x: number;
     text: string;
     fontSize: number;
     rowIndex: number;
-    width: number;
 }
 
 interface LabelLayoutResult {

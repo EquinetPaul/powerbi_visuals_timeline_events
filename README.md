@@ -15,9 +15,12 @@ Custom Power BI visual that displays events on a horizontal timeline.
 - Optional legend when event symbols are enabled
 
 ## Data Roles
-- Date
-- Event Name
-- Tooltip (one or more fields)
+- Date (one field: a date column, or text dates such as `2026-01-05`)
+- Event Name (one field)
+- Tooltip (one or more fields, formatted with the model's format strings)
+
+> If the Date field shows a date hierarchy (Year / Quarter / Month / Day), click the arrow next to the
+> field in the Date well and select the column name instead of "Date Hierarchy".
 
 ## Sample Data (use for screenshot)
 
@@ -32,5 +35,9 @@ Custom Power BI visual that displays events on a horizontal timeline.
 ## Development
 ```bash
 npm install
-pbiviz start
+npm start          # pbiviz start --all-locales
+npm run package    # pbiviz package --all-locales -> dist/*.pbiviz
 ```
+
+`--all-locales` keeps every culture of `powerbi-visuals-utils-formattingutils` in the bundle, so numbers and
+dates follow the report's locale (e.g. `1 234,50 €` in French). Without it, `pbiviz` only keeps `en-US`.

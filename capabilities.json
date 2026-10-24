@@ -58,6 +58,16 @@
     },
     "dataViewMappings": [
         {
+            "conditions": [
+                {
+                    "date": {
+                        "max": 1
+                    },
+                    "event": {
+                        "max": 1
+                    }
+                }
+            ],
             "table": {
                 "rows": {
                     "select": [
@@ -76,7 +86,12 @@
                                 "in": "tooltip"
                             }
                         }
-                    ]
+                    ],
+                    "dataReductionAlgorithm": {
+                        "top": {
+                            "count": 30000
+                        }
+                    }
                 }
             }
         }
