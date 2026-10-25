@@ -11,6 +11,7 @@ import ISelectionId = powerbi.visuals.ISelectionId;
 import IVisualHost = powerbi.extensibility.visual.IVisualHost;
 import IValueFormatter = valueFormatter.IValueFormatter;
 
+import { MarkerIcon, resolveIcon } from "./icons";
 import { MARKER_SHAPES } from "./shapes";
 import { MarkerShape, VisualFormattingSettingsModel } from "./settings";
 
@@ -30,6 +31,7 @@ export interface TimelineEvent {
     legend: string | null;
     color: string;
     shape: MarkerShape;
+    icon: MarkerIcon | null;
     tooltipFields: TooltipField[];
     selectionId: ISelectionId;
 }
@@ -38,9 +40,12 @@ export interface LegendItem {
     label: string;
     color: string;
     shape: MarkerShape;
+    icon: MarkerIcon | null;
+    /** Icon chosen for this legend value in the format pane ("none" when there is none). */
+    iconName: string;
     events: TimelineEvent[];
-    /** Selector of the legend value, used to persist its color. Null when the legend data view is missing. */
-    colorSelector: powerbi.data.Selector | null;
+    /** Selector of the legend value, used to persist its color and icon. Null when the legend data view is missing. */
+    selector: powerbi.data.Selector | null;
 }
 
 export interface TimelineData {
@@ -70,6 +75,7 @@ export interface ColorOptions {
 
 interface LegendValueInfo {
     color: string | null;
+    iconName: string | null;
     selector: powerbi.data.Selector;
 }
 
@@ -108,6 +114,8 @@ export function buildTimelineData(
     const dateColumnIndex = findDateColumnIndex(columns);
     const eventColumnIndex = columns.findIndex((column) => column.roles && column.roles.event);
     const legendColumnIndex = columns.findIndex((column) => column.roles && column.roles.legend);
+    const iconColumnIndex = columns.findIndex((column) => column.roles && column.roles.icon);
+    const showIcons = settings.icons.show.value;
     const tooltipColumnIndexes = columns
         .map((column, index) => (column.roles && column.roles.tooltip ? index : -1))
         .filter((index) => index !== -1);
@@ -143,6 +151,7 @@ export function buildTimelineData(
             legend: legendFormatter ? formatText(legendValue, legendFormatter) : null,
             color: "",
             shape: "circle",
+            icon: showIcons && iconColumnIndex !== -1 ? resolveIcon(row[iconColumnIndex]) : null,
             tooltipFields: tooltipColumnIndexes
                 .map((index, position) => ({ column: columns[index], value: row[index], formatter: tooltipFormatters[position] }))
                 .filter(({ value }) => value !== null && value !== undefined && value !== "")
@@ -181,7 +190,7 @@ export function buildTimelineData(
 }
 
 /**
- * Colors picked per legend value are stored against the legend value's identity and come back
+ * Colors and icons picked per legend value are stored against the legend value's identity and come back
  * in the categorical data view's category objects.
  */
 function getLegendValues(category: DataViewCategoryColumn | null, formatter: IValueFormatter, host: IVisualHost): Map<string, LegendValueInfo> {
@@ -193,6 +202,7 @@ function getLegendValues(category: DataViewCategoryColumn | null, formatter: IVa
         const objects = category.objects && category.objects[index];
         values.set(formatText(value, formatter), {
             color: getFillColor(objects && objects["colors"] && objects["colors"]["fill"]),
+            iconName: objects && objects["icons"] && typeof objects["icons"]["icon"] === "string" ? objects["icons"]["icon"] as string : null,
             selector: host.createSelectionIdBuilder().withCategory(category, index).createSelectionId().getSelector()
         });
     });
@@ -214,7 +224,7 @@ function buildLegendItems(
         const label = event.legend || "";
         let item = itemsByLabel.get(label);
         if (!item) {
-            item = { label, color: "", shape: "circle", events: [], colorSelector: null };
+            item = { label, color: "", shape: "circle", icon: null, iconName: "none", events: [], selector: null };
             itemsByLabel.set(label, item);
         }
         item.events.push(event);
@@ -228,7 +238,9 @@ function buildLegendItems(
             : (legendValue && legendValue.color) || host.colorPalette.getColor(item.label).value;
         // In high contrast mode every group has the same color, so groups are told apart by their shape.
         item.shape = colorOptions.isHighContrast ? MARKER_SHAPES[index % MARKER_SHAPES.length] : settings.markers.shape.value as MarkerShape;
-        item.colorSelector = legendValue ? legendValue.selector : null;
+        item.iconName = (legendValue && legendValue.iconName) || "none";
+        item.icon = settings.icons.show.value ? resolveIcon(item.iconName) : null;
+        item.selector = legendValue ? legendValue.selector : null;
     });
     return items;
 }
@@ -250,9 +262,12 @@ function applyEventStyles(
     const defaultColor = colorOptions.isHighContrast
         ? colorOptions.foreground
         : settings.colors.defaultColor.value.value || host.colorPalette.getColor("defaultColor").value;
+    const defaultIcon = settings.icons.show.value ? resolveIcon(settings.icons.defaultIcon.value) : null;
     events.forEach((event) => {
         const legendItem = event.legend !== null ? legendByLabel.get(event.legend || "") : undefined;
         event.color = legendItem ? legendItem.color : defaultColor;
+        // An Icon field value wins over the icon of the legend value, which wins over the icon for all events.
+        event.icon = event.icon || (legendItem ? legendItem.icon : defaultIcon);
         event.shape = shapesByEventName
             ? shapesByEventName.get(event.name)
             : legendItem ? legendItem.shape : settings.markers.shape.value as MarkerShape;
@@ -272,7 +287,7 @@ function buildEventNameLegendItems(events: TimelineEvent[]): LegendItem[] {
     events.forEach((event) => {
         let item = items.get(event.name);
         if (!item) {
-            item = { label: event.name, color: event.color, shape: event.shape, events: [], colorSelector: null };
+            item = { label: event.name, color: event.color, shape: event.shape, icon: event.icon, iconName: "none", events: [], selector: null };
             items.set(event.name, item);
         }
         item.events.push(event);

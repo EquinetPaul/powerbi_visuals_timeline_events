@@ -19,6 +19,12 @@
             "kind": "Grouping"
         },
         {
+            "displayName": "Icon",
+            "displayNameKey": "Role_Icon",
+            "name": "icon",
+            "kind": "Grouping"
+        },
+        {
             "displayName": "Tooltip",
             "displayNameKey": "Role_Tooltip",
             "name": "tooltip",
@@ -140,6 +146,46 @@
                 }
             }
         },
+        "lanes": {
+            "displayNameKey": "Card_Lanes",
+            "properties": {
+                "show": {
+                    "displayNameKey": "Prop_Show",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "visibleLanes": {
+                    "displayNameKey": "Prop_VisibleLanes",
+                    "type": {
+                        "numeric": true
+                    }
+                },
+                "order": {
+                    "displayNameKey": "Prop_LaneOrder",
+                    "type": {
+                        "enumeration": [
+                            {
+                                "value": "alphabetical",
+                                "displayName": "Alphabetical",
+                                "displayNameKey": "Enum_Alphabetical"
+                            },
+                            {
+                                "value": "firstDate",
+                                "displayName": "First event",
+                                "displayNameKey": "Enum_FirstDate"
+                            }
+                        ]
+                    }
+                },
+                "alternateBackground": {
+                    "displayNameKey": "Prop_AlternateBackground",
+                    "type": {
+                        "bool": true
+                    }
+                }
+            }
+        },
         "colors": {
             "displayNameKey": "Card_Colors",
             "properties": {
@@ -225,6 +271,461 @@
                     "displayNameKey": "Prop_Size",
                     "type": {
                         "numeric": true
+                    }
+                }
+            }
+        },
+        "icons": {
+            "displayNameKey": "Card_Icons",
+            "properties": {
+                "show": {
+                    "displayNameKey": "Prop_Show",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "defaultIcon": {
+                    "displayNameKey": "Prop_DefaultIcon",
+                    "type": {
+                        "enumeration": [
+                            {
+                                "value": "none",
+                                "displayName": "None",
+                                "displayNameKey": "Icon_none"
+                            },
+                            {
+                                "value": "flag",
+                                "displayName": "Flag",
+                                "displayNameKey": "Icon_flag"
+                            },
+                            {
+                                "value": "check",
+                                "displayName": "Check mark",
+                                "displayNameKey": "Icon_check"
+                            },
+                            {
+                                "value": "warning",
+                                "displayName": "Warning",
+                                "displayNameKey": "Icon_warning"
+                            },
+                            {
+                                "value": "info",
+                                "displayName": "Information",
+                                "displayNameKey": "Icon_info"
+                            },
+                            {
+                                "value": "question",
+                                "displayName": "Question",
+                                "displayNameKey": "Icon_question"
+                            },
+                            {
+                                "value": "bell",
+                                "displayName": "Bell",
+                                "displayNameKey": "Icon_bell"
+                            },
+                            {
+                                "value": "star",
+                                "displayName": "Star",
+                                "displayNameKey": "Icon_star"
+                            },
+                            {
+                                "value": "heart",
+                                "displayName": "Heart",
+                                "displayNameKey": "Icon_heart"
+                            },
+                            {
+                                "value": "target",
+                                "displayName": "Target",
+                                "displayNameKey": "Icon_target"
+                            },
+                            {
+                                "value": "trophy",
+                                "displayName": "Trophy",
+                                "displayNameKey": "Icon_trophy"
+                            },
+                            {
+                                "value": "rocket",
+                                "displayName": "Rocket",
+                                "displayNameKey": "Icon_rocket"
+                            },
+                            {
+                                "value": "flash",
+                                "displayName": "Flash",
+                                "displayNameKey": "Icon_flash"
+                            },
+                            {
+                                "value": "lightbulb",
+                                "displayName": "Light bulb",
+                                "displayNameKey": "Icon_lightbulb"
+                            },
+                            {
+                                "value": "search",
+                                "displayName": "Search",
+                                "displayNameKey": "Icon_search"
+                            },
+                            {
+                                "value": "calendar",
+                                "displayName": "Calendar",
+                                "displayNameKey": "Icon_calendar"
+                            },
+                            {
+                                "value": "clock",
+                                "displayName": "Clock",
+                                "displayNameKey": "Icon_clock"
+                            },
+                            {
+                                "value": "location",
+                                "displayName": "Location",
+                                "displayNameKey": "Icon_location"
+                            },
+                            {
+                                "value": "people",
+                                "displayName": "People",
+                                "displayNameKey": "Icon_people"
+                            },
+                            {
+                                "value": "person",
+                                "displayName": "Person",
+                                "displayNameKey": "Icon_person"
+                            },
+                            {
+                                "value": "handshake",
+                                "displayName": "Handshake",
+                                "displayNameKey": "Icon_handshake"
+                            },
+                            {
+                                "value": "chat",
+                                "displayName": "Chat",
+                                "displayNameKey": "Icon_chat"
+                            },
+                            {
+                                "value": "mail",
+                                "displayName": "Mail",
+                                "displayNameKey": "Icon_mail"
+                            },
+                            {
+                                "value": "megaphone",
+                                "displayName": "Megaphone",
+                                "displayNameKey": "Icon_megaphone"
+                            },
+                            {
+                                "value": "document",
+                                "displayName": "Document",
+                                "displayNameKey": "Icon_document"
+                            },
+                            {
+                                "value": "book",
+                                "displayName": "Book",
+                                "displayNameKey": "Icon_book"
+                            },
+                            {
+                                "value": "briefcase",
+                                "displayName": "Briefcase",
+                                "displayNameKey": "Icon_briefcase"
+                            },
+                            {
+                                "value": "money",
+                                "displayName": "Money",
+                                "displayNameKey": "Icon_money"
+                            },
+                            {
+                                "value": "cart",
+                                "displayName": "Cart",
+                                "displayNameKey": "Icon_cart"
+                            },
+                            {
+                                "value": "truck",
+                                "displayName": "Truck",
+                                "displayNameKey": "Icon_truck"
+                            },
+                            {
+                                "value": "airplane",
+                                "displayName": "Airplane",
+                                "displayNameKey": "Icon_airplane"
+                            },
+                            {
+                                "value": "box",
+                                "displayName": "Box",
+                                "displayNameKey": "Icon_box"
+                            },
+                            {
+                                "value": "building",
+                                "displayName": "Building",
+                                "displayNameKey": "Icon_building"
+                            },
+                            {
+                                "value": "home",
+                                "displayName": "Home",
+                                "displayNameKey": "Icon_home"
+                            },
+                            {
+                                "value": "settings",
+                                "displayName": "Settings",
+                                "displayNameKey": "Icon_settings"
+                            },
+                            {
+                                "value": "wrench",
+                                "displayName": "Wrench",
+                                "displayNameKey": "Icon_wrench"
+                            },
+                            {
+                                "value": "code",
+                                "displayName": "Code",
+                                "displayNameKey": "Icon_code"
+                            },
+                            {
+                                "value": "bug",
+                                "displayName": "Bug",
+                                "displayNameKey": "Icon_bug"
+                            },
+                            {
+                                "value": "database",
+                                "displayName": "Database",
+                                "displayNameKey": "Icon_database"
+                            },
+                            {
+                                "value": "cloud",
+                                "displayName": "Cloud",
+                                "displayNameKey": "Icon_cloud"
+                            },
+                            {
+                                "value": "lock",
+                                "displayName": "Lock",
+                                "displayNameKey": "Icon_lock"
+                            },
+                            {
+                                "value": "shield",
+                                "displayName": "Shield",
+                                "displayNameKey": "Icon_shield"
+                            },
+                            {
+                                "value": "chart",
+                                "displayName": "Chart",
+                                "displayNameKey": "Icon_chart"
+                            }
+                        ]
+                    }
+                },
+                "icon": {
+                    "displayNameKey": "Prop_Icon",
+                    "type": {
+                        "enumeration": [
+                            {
+                                "value": "none",
+                                "displayName": "None",
+                                "displayNameKey": "Icon_none"
+                            },
+                            {
+                                "value": "flag",
+                                "displayName": "Flag",
+                                "displayNameKey": "Icon_flag"
+                            },
+                            {
+                                "value": "check",
+                                "displayName": "Check mark",
+                                "displayNameKey": "Icon_check"
+                            },
+                            {
+                                "value": "warning",
+                                "displayName": "Warning",
+                                "displayNameKey": "Icon_warning"
+                            },
+                            {
+                                "value": "info",
+                                "displayName": "Information",
+                                "displayNameKey": "Icon_info"
+                            },
+                            {
+                                "value": "question",
+                                "displayName": "Question",
+                                "displayNameKey": "Icon_question"
+                            },
+                            {
+                                "value": "bell",
+                                "displayName": "Bell",
+                                "displayNameKey": "Icon_bell"
+                            },
+                            {
+                                "value": "star",
+                                "displayName": "Star",
+                                "displayNameKey": "Icon_star"
+                            },
+                            {
+                                "value": "heart",
+                                "displayName": "Heart",
+                                "displayNameKey": "Icon_heart"
+                            },
+                            {
+                                "value": "target",
+                                "displayName": "Target",
+                                "displayNameKey": "Icon_target"
+                            },
+                            {
+                                "value": "trophy",
+                                "displayName": "Trophy",
+                                "displayNameKey": "Icon_trophy"
+                            },
+                            {
+                                "value": "rocket",
+                                "displayName": "Rocket",
+                                "displayNameKey": "Icon_rocket"
+                            },
+                            {
+                                "value": "flash",
+                                "displayName": "Flash",
+                                "displayNameKey": "Icon_flash"
+                            },
+                            {
+                                "value": "lightbulb",
+                                "displayName": "Light bulb",
+                                "displayNameKey": "Icon_lightbulb"
+                            },
+                            {
+                                "value": "search",
+                                "displayName": "Search",
+                                "displayNameKey": "Icon_search"
+                            },
+                            {
+                                "value": "calendar",
+                                "displayName": "Calendar",
+                                "displayNameKey": "Icon_calendar"
+                            },
+                            {
+                                "value": "clock",
+                                "displayName": "Clock",
+                                "displayNameKey": "Icon_clock"
+                            },
+                            {
+                                "value": "location",
+                                "displayName": "Location",
+                                "displayNameKey": "Icon_location"
+                            },
+                            {
+                                "value": "people",
+                                "displayName": "People",
+                                "displayNameKey": "Icon_people"
+                            },
+                            {
+                                "value": "person",
+                                "displayName": "Person",
+                                "displayNameKey": "Icon_person"
+                            },
+                            {
+                                "value": "handshake",
+                                "displayName": "Handshake",
+                                "displayNameKey": "Icon_handshake"
+                            },
+                            {
+                                "value": "chat",
+                                "displayName": "Chat",
+                                "displayNameKey": "Icon_chat"
+                            },
+                            {
+                                "value": "mail",
+                                "displayName": "Mail",
+                                "displayNameKey": "Icon_mail"
+                            },
+                            {
+                                "value": "megaphone",
+                                "displayName": "Megaphone",
+                                "displayNameKey": "Icon_megaphone"
+                            },
+                            {
+                                "value": "document",
+                                "displayName": "Document",
+                                "displayNameKey": "Icon_document"
+                            },
+                            {
+                                "value": "book",
+                                "displayName": "Book",
+                                "displayNameKey": "Icon_book"
+                            },
+                            {
+                                "value": "briefcase",
+                                "displayName": "Briefcase",
+                                "displayNameKey": "Icon_briefcase"
+                            },
+                            {
+                                "value": "money",
+                                "displayName": "Money",
+                                "displayNameKey": "Icon_money"
+                            },
+                            {
+                                "value": "cart",
+                                "displayName": "Cart",
+                                "displayNameKey": "Icon_cart"
+                            },
+                            {
+                                "value": "truck",
+                                "displayName": "Truck",
+                                "displayNameKey": "Icon_truck"
+                            },
+                            {
+                                "value": "airplane",
+                                "displayName": "Airplane",
+                                "displayNameKey": "Icon_airplane"
+                            },
+                            {
+                                "value": "box",
+                                "displayName": "Box",
+                                "displayNameKey": "Icon_box"
+                            },
+                            {
+                                "value": "building",
+                                "displayName": "Building",
+                                "displayNameKey": "Icon_building"
+                            },
+                            {
+                                "value": "home",
+                                "displayName": "Home",
+                                "displayNameKey": "Icon_home"
+                            },
+                            {
+                                "value": "settings",
+                                "displayName": "Settings",
+                                "displayNameKey": "Icon_settings"
+                            },
+                            {
+                                "value": "wrench",
+                                "displayName": "Wrench",
+                                "displayNameKey": "Icon_wrench"
+                            },
+                            {
+                                "value": "code",
+                                "displayName": "Code",
+                                "displayNameKey": "Icon_code"
+                            },
+                            {
+                                "value": "bug",
+                                "displayName": "Bug",
+                                "displayNameKey": "Icon_bug"
+                            },
+                            {
+                                "value": "database",
+                                "displayName": "Database",
+                                "displayNameKey": "Icon_database"
+                            },
+                            {
+                                "value": "cloud",
+                                "displayName": "Cloud",
+                                "displayNameKey": "Icon_cloud"
+                            },
+                            {
+                                "value": "lock",
+                                "displayName": "Lock",
+                                "displayNameKey": "Icon_lock"
+                            },
+                            {
+                                "value": "shield",
+                                "displayName": "Shield",
+                                "displayNameKey": "Icon_shield"
+                            },
+                            {
+                                "value": "chart",
+                                "displayName": "Chart",
+                                "displayNameKey": "Icon_chart"
+                            }
+                        ]
                     }
                 }
             }
@@ -365,6 +866,12 @@
                         "numeric": true
                     }
                 },
+                "showDate": {
+                    "displayNameKey": "Prop_ShowDate",
+                    "type": {
+                        "bool": true
+                    }
+                },
                 "fontFamily": {
                     "displayNameKey": "Prop_Font",
                     "type": {
@@ -467,6 +974,9 @@
                     },
                     "legend": {
                         "max": 1
+                    },
+                    "icon": {
+                        "max": 1
                     }
                 }
             ],
@@ -486,6 +996,11 @@
                         {
                             "for": {
                                 "in": "legend"
+                            }
+                        },
+                        {
+                            "for": {
+                                "in": "icon"
                             }
                         },
                         {

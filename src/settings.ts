@@ -47,6 +47,7 @@ export type MarkerShape = "circle" | "square" | "diamond" | "triangle" | "invert
 export type LabelPosition = "above" | "below" | "alternate";
 export type DateLabelMode = "auto" | "eventDates" | "startEnd";
 export type LineStyle = "solid" | "dashed" | "dotted";
+export type LaneOrder = "alphabetical" | "firstDate";
 
 function createFontControl(defaultFontSize: number): formattingSettings.FontControl {
     return new formattingSettings.FontControl({
@@ -102,6 +103,21 @@ class LegendCard extends CompositeCard {
 }
 
 /**
+ * One lane per legend value. Lanes scroll vertically when there are more than `visibleLanes`.
+ */
+class LanesCard extends FormattingSettingsCard {
+    show = new formattingSettings.ToggleSwitch({ name: "show", displayNameKey: "Prop_Show", value: false });
+    visibleLanes = createNumUpDown("visibleLanes", "Prop_VisibleLanes", 4, 1, 20);
+    order = new formattingSettings.AutoDropdown({ name: "order", displayNameKey: "Prop_LaneOrder", value: "alphabetical" });
+    alternateBackground = new formattingSettings.ToggleSwitch({ name: "alternateBackground", displayNameKey: "Prop_AlternateBackground", value: true });
+
+    name: string = "lanes";
+    displayNameKey: string = "Card_Lanes";
+    topLevelSlice = this.show;
+    slices: Array<FormattingSettingsSlice> = [this.visibleLanes, this.order, this.alternateBackground];
+}
+
+/**
  * The per-legend-value color pickers are added at runtime, once the legend values are known.
  */
 class ColorsCard extends FormattingSettingsCard {
@@ -120,6 +136,20 @@ class MarkersCard extends FormattingSettingsCard {
     name: string = "markers";
     displayNameKey: string = "Card_Markers";
     slices: Array<FormattingSettingsSlice> = [this.shape, this.shapeByEvent, this.size];
+}
+
+/**
+ * Icons drawn inside the markers. The per-legend-value icon dropdowns are added at runtime;
+ * an Icon field value, when present, takes precedence.
+ */
+class IconsCard extends FormattingSettingsCard {
+    show = new formattingSettings.ToggleSwitch({ name: "show", displayNameKey: "Prop_Show", value: true });
+    defaultIcon = new formattingSettings.AutoDropdown({ name: "defaultIcon", displayNameKey: "Prop_DefaultIcon", value: "none" });
+
+    name: string = "icons";
+    displayNameKey: string = "Card_Icons";
+    topLevelSlice = this.show;
+    slices: Array<FormattingSettingsSlice> = [this.defaultIcon];
 }
 
 class DateAxisCard extends CompositeCard {
@@ -144,6 +174,7 @@ class LabelsCard extends CompositeCard {
     position = new formattingSettings.AutoDropdown({ name: "position", displayNameKey: "Prop_Position", value: "above" });
     leaderLines = new formattingSettings.ToggleSwitch({ name: "leaderLines", displayNameKey: "Prop_LeaderLines", value: true });
     maxRows = createNumUpDown("maxRows", "Prop_MaxRows", 4, 1, 20);
+    showDate = new formattingSettings.ToggleSwitch({ name: "showDate", displayNameKey: "Prop_ShowDate", value: false });
     font = createFontControl(9);
     labelColor = createColorPicker("labelColor", "Prop_Color", DEFAULT_TEXT_COLOR);
 
@@ -151,7 +182,7 @@ class LabelsCard extends CompositeCard {
     displayNameKey: string = "Card_Labels";
     topLevelSlice = this.show;
     groups: Group[] = [
-        new Group({ name: "labelsOptions", displayNameKey: "Group_Options", slices: [this.position, this.leaderLines, this.maxRows] }),
+        new Group({ name: "labelsOptions", displayNameKey: "Group_Options", slices: [this.position, this.leaderLines, this.maxRows, this.showDate] }),
         new Group({ name: "labelsValues", displayNameKey: "Group_Values", slices: [this.font, this.labelColor] })
     ];
 }
@@ -172,11 +203,13 @@ class TodayLineCard extends FormattingSettingsCard {
  */
 export class VisualFormattingSettingsModel extends FormattingSettingsModel {
     legend = new LegendCard();
+    lanes = new LanesCard();
     colors = new ColorsCard();
     markers = new MarkersCard();
+    icons = new IconsCard();
     dateAxis = new DateAxisCard();
     labels = new LabelsCard();
     todayLine = new TodayLineCard();
 
-    cards = [this.legend, this.colors, this.markers, this.dateAxis, this.labels, this.todayLine];
+    cards = [this.legend, this.lanes, this.colors, this.markers, this.icons, this.dateAxis, this.labels, this.todayLine];
 }

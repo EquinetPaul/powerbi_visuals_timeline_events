@@ -40,6 +40,7 @@ import VisualTooltipDataItem = powerbi.extensibility.VisualTooltipDataItem;
 import VisualUpdateOptions = powerbi.extensibility.visual.VisualUpdateOptions;
 
 import { buildTimelineData, getTableDataView, LegendItem, TimelineData, TimelineEvent } from "./dataModel";
+import { createIcon } from "./icons";
 import { clamp, countRows, getAxisTicks, getLabelWidths, LabelItem, LabelLayout, layoutLabels, measureText, TextStyle } from "./layout";
 import { createShape } from "./shapes";
 import {
@@ -48,20 +49,28 @@ import {
     DEFAULT_LINE_COLOR,
     DEFAULT_TODAY_COLOR,
     LabelPosition,
+    LaneOrder,
     LegendPosition,
     LineStyle,
     VisualFormattingSettingsModel
 } from "./settings";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-// Space kept above and below the drawing.
+// Space kept above and below the drawing (and inside each lane).
 const MARGIN = 8;
+const LANE_MARGIN = 4;
 // Space between a marker and its first label row, and between labels on a row.
 const LABEL_GAP = 4;
 const LABEL_ROW_GAP = 6;
 const TICK_LENGTH = 4;
 // Labels are not shortened below this width: a label that does not fit is hidden rather than cut to a few letters.
-const MIN_LABEL_WIDTH = 80;
+const MIN_LABEL_WIDTH = 120;
+// Markers that hold an icon are drawn at least this big so that the icon stays readable.
+const ICON_MARKER_SIZE = 20;
+const MIN_LANE_HEIGHT = 40;
+const SCROLLBAR_WIDTH = 8;
+const GRID_COLOR = "#EDEBE9";
+const ALTERNATE_LANE_COLOR = "#FAF9F8";
 const DIMMED_CLASS = "dimmed";
 
 interface Theme {
@@ -81,13 +90,38 @@ interface AxisLabel {
     anchor: "start" | "middle" | "end";
 }
 
+interface Lane {
+    item: LegendItem;
+    legendIndex: number;
+    /** Indexes of the lane's events in TimelineData.events, in date order. */
+    indexes: number[];
+}
+
+/**
+ * How to draw one band: the single timeline, or one lane.
+ */
+interface BandOptions {
+    x0: number;
+    x1: number;
+    xOf: (date: Date) => number;
+    /** Date labels drawn under the line. Lanes share one axis at the bottom instead. */
+    axisLabels: AxisLabel[] | null;
+    ticks: number[];
+    gridlines: boolean;
+    todayX: number | null;
+    todayLabel: boolean;
+    margin: number;
+    /** Keeps the line at the same height whatever the number of label rows, so that lanes line up. */
+    fixedLine: boolean;
+    background: string;
+}
+
 export class Visual implements IVisual {
     private host: IVisualHost;
     private target: HTMLElement;
     private root: HTMLDivElement;
     private legend: HTMLDivElement;
     private chart: HTMLDivElement;
-    private svg: SVGSVGElement;
     private message: HTMLDivElement;
     private selectionManager: ISelectionManager;
     private localizationManager: ILocalizationManager;
@@ -98,6 +132,10 @@ export class Visual implements IVisual {
     private data: TimelineData | null = null;
     private selectedKeys = new Set<string>();
     private focusedIndex = 0;
+    /** Event indexes per lane, used by the keyboard navigation. The single timeline is one lane. */
+    private laneIndexes: number[][] = [];
+    private laneOf: number[] = [];
+    private lanesScrollTop = 0;
 
     constructor(options: VisualConstructorOptions) {
         this.host = options.host;
@@ -118,11 +156,8 @@ export class Visual implements IVisual {
 
         this.chart = document.createElement("div");
         this.chart.className = "timeline-chart";
-        this.svg = document.createElementNS(SVG_NS, "svg");
-        this.svg.classList.add("timeline-svg");
-        this.svg.setAttribute("role", "listbox");
-        this.svg.setAttribute("aria-multiselectable", "true");
-        this.chart.appendChild(this.svg);
+        this.chart.setAttribute("role", "listbox");
+        this.chart.setAttribute("aria-multiselectable", "true");
         this.root.appendChild(this.chart);
 
         this.message = document.createElement("div");
@@ -151,7 +186,7 @@ export class Visual implements IVisual {
                 foreground: this.theme.foreground
             });
             this.data = result.status === "ok" ? result.data : null;
-            this.updateColorSlices();
+            this.updateDataBoundSlices();
 
             if (result.status === "landing") {
                 this.renderMessage(this.getString("Landing_Text"), this.getString("Landing_Title"));
@@ -193,22 +228,38 @@ export class Visual implements IVisual {
     }
 
     /**
-     * Shows one color picker per legend value in the Colors card, or the default color when there is no legend.
+     * Shows one color picker and one icon dropdown per legend value in the Colors and Icons cards,
+     * or the settings for all events when there is no legend.
      */
-    private updateColorSlices(): void {
-        const colors = this.formattingSettings.colors;
-        const legendItems = this.data && this.data.legendColumnName !== null ? this.data.legendItems : [];
-        colors.defaultColor.visible = legendItems.length === 0;
-        if (!colors.defaultColor.value.value && this.data && legendItems.length === 0 && !this.theme.isHighContrast) {
+    private updateDataBoundSlices(): void {
+        const { colors, icons } = this.formattingSettings;
+        const legendItems = this.data && this.data.legendColumnName !== null
+            ? this.data.legendItems.filter((item) => item.selector !== null)
+            : [];
+        const hasLegend = !!this.data && this.data.legendColumnName !== null;
+
+        colors.defaultColor.visible = !hasLegend;
+        if (!colors.defaultColor.value.value && this.data && !hasLegend && !this.theme.isHighContrast) {
             colors.defaultColor.value = { value: this.data.events[0].color };
         }
         colors.slices = [
             colors.defaultColor,
-            ...legendItems.filter((item) => item.colorSelector !== null).map((item) => new formattingSettings.ColorPicker({
+            ...legendItems.map((item) => new formattingSettings.ColorPicker({
                 name: "fill",
                 displayName: item.label,
                 value: { value: item.color },
-                selector: item.colorSelector
+                selector: item.selector
+            }))
+        ];
+
+        icons.defaultIcon.visible = !hasLegend;
+        icons.slices = [
+            icons.defaultIcon,
+            ...legendItems.map((item) => new formattingSettings.AutoDropdown({
+                name: "icon",
+                displayName: item.label,
+                value: item.iconName,
+                selector: item.selector
             }))
         ];
     }
@@ -260,20 +311,49 @@ export class Visual implements IVisual {
     private render(data: TimelineData, width: number, height: number): void {
         this.message.style.display = "none";
         this.chart.style.display = "block";
+        this.focusedIndex = Math.min(this.focusedIndex, data.events.length - 1);
 
-        const legendSize = this.renderLegend(data, width, height);
+        const lanes = this.getLanes(data);
+        const legendSize = this.renderLegend(data, width, height, lanes !== null);
         const isVerticalLegend = this.root.classList.contains("legend-left") || this.root.classList.contains("legend-right");
         const chartWidth = Math.max(isVerticalLegend ? width - legendSize : width, 1);
         const chartHeight = Math.max(isVerticalLegend ? height : height - legendSize, 1);
-        this.renderChart(data, chartWidth, chartHeight);
+
+        this.chart.replaceChildren();
+        this.chart.setAttribute("aria-label", this.getString("Aria_Timeline"));
+        if (lanes) {
+            this.renderLanes(data, lanes, chartWidth, chartHeight);
+        } else {
+            this.renderSingle(data, chartWidth, chartHeight);
+        }
 
         this.syncSelection(this.selectionManager.getSelectionIds() as ISelectionId[]);
     }
 
     /**
-     * Renders the legend and returns the space it takes (height, or width for a left/right legend).
+     * One lane per legend value when the Lanes card is on and a Legend field is set, otherwise null.
      */
-    private renderLegend(data: TimelineData, width: number, height: number): number {
+    private getLanes(data: TimelineData): Lane[] | null {
+        if (!this.formattingSettings.lanes.show.value || data.legendColumnName === null || data.legendItems.length === 0) {
+            return null;
+        }
+        const indexOf = new Map(data.events.map((event, index): [TimelineEvent, number] => [event, index]));
+        const lanes = data.legendItems.map((item, legendIndex): Lane => ({
+            item,
+            legendIndex,
+            indexes: item.events.map((event) => indexOf.get(event))
+        }));
+        if (this.formattingSettings.lanes.order.value as LaneOrder === "firstDate") {
+            lanes.sort((a, b) => a.indexes[0] - b.indexes[0]);
+        }
+        return lanes;
+    }
+
+    /**
+     * Renders the legend and returns the space it takes (height, or width for a left/right legend).
+     * Lanes show their own names, so the legend is hidden when lanes are on.
+     */
+    private renderLegend(data: TimelineData, width: number, height: number, hidden: boolean): number {
         const settings = this.formattingSettings.legend;
         const position = settings.position.value as LegendPosition;
         const isVertical = position.indexOf("Left") === 0 || position.indexOf("Right") === 0;
@@ -282,7 +362,7 @@ export class Visual implements IVisual {
         this.legend.classList.toggle("centered", position.indexOf("Center") !== -1);
         this.legend.replaceChildren();
 
-        if (!settings.show.value || data.legendItems.length === 0) {
+        if (hidden || !settings.show.value || data.legendItems.length === 0) {
             this.legend.style.display = "none";
             return 0;
         }
@@ -301,38 +381,10 @@ export class Visual implements IVisual {
             this.legend.appendChild(title);
         }
 
-        const markerSize = Math.max(Math.round(style.fontSize * 0.75), 6);
-        const interactive = this.allowInteractions() && !data.legendByEventName;
         data.legendItems.forEach((item, index) => {
-            const element = document.createElement("div");
-            element.className = "timeline-legend-item";
-            element.setAttribute("role", "listitem");
-            element.setAttribute("data-legend-index", index.toString());
-            element.title = item.label;
-
-            const marker = document.createElementNS(SVG_NS, "svg");
-            marker.setAttribute("width", `${markerSize + 2}`);
-            marker.setAttribute("height", `${markerSize + 2}`);
-            marker.setAttribute("aria-hidden", "true");
-            const shape = createShape(item.shape, markerSize / 2 + 1, markerSize / 2 + 1, markerSize);
-            shape.setAttribute("fill", item.color);
-            marker.appendChild(shape);
-
-            const label = document.createElement("span");
-            label.textContent = item.label;
-
-            element.appendChild(marker);
-            element.appendChild(label);
-            if (interactive) {
-                element.tabIndex = 0;
-                element.setAttribute("role", "button");
-                element.addEventListener("click", (event) => this.selectLegendItem(item, event));
-                element.addEventListener("keydown", (event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        this.selectLegendItem(item, event);
-                    }
-                });
+            const element = this.createLegendEntry("timeline-legend-item", item, index, style, !data.legendByEventName);
+            if (!element.hasAttribute("role")) {
+                element.setAttribute("role", "listitem");
             }
             this.legend.appendChild(element);
         });
@@ -340,96 +392,288 @@ export class Visual implements IVisual {
         return isVertical ? this.legend.offsetWidth : this.legend.offsetHeight;
     }
 
-    private renderChart(data: TimelineData, width: number, height: number): void {
-        const settings = this.formattingSettings;
-        this.svg.replaceChildren();
-        this.svg.setAttribute("width", width.toString());
-        this.svg.setAttribute("height", height.toString());
-        this.svg.setAttribute("aria-label", this.getString("Aria_Timeline"));
+    /**
+     * A legend marker and name, used by the legend and by the lane names. Clicking it selects the group's events.
+     */
+    private createLegendEntry(className: string, item: LegendItem, legendIndex: number, style: TextStyle, interactive: boolean): HTMLDivElement {
+        const element = document.createElement("div");
+        element.className = className;
+        element.setAttribute("data-legend-index", legendIndex.toString());
+        element.title = item.label;
 
-        const markerSize = settings.markers.size.value;
-        const radius = markerSize / 2;
-        const paddingX = Math.max(16, radius + 4);
+        const markerSize = item.icon ? Math.round(style.fontSize * 1.2) : Math.max(Math.round(style.fontSize * 0.75), 6);
+        const marker = document.createElementNS(SVG_NS, "svg");
+        marker.setAttribute("width", `${markerSize + 2}`);
+        marker.setAttribute("height", `${markerSize + 2}`);
+        marker.setAttribute("aria-hidden", "true");
+        const center = markerSize / 2 + 1;
+        const shape = createShape(item.icon ? "circle" : item.shape, center, center, markerSize);
+        shape.setAttribute("fill", item.color);
+        marker.appendChild(shape);
+        if (item.icon) {
+            marker.appendChild(createIcon(item.icon, center, center, markerSize * 0.62, this.getIconColor()));
+        }
+
+        const label = document.createElement("span");
+        label.textContent = item.label;
+        element.appendChild(marker);
+        element.appendChild(label);
+
+        if (interactive && this.allowInteractions()) {
+            element.tabIndex = 0;
+            element.setAttribute("role", "button");
+            element.addEventListener("click", (event) => {
+                event.stopPropagation();
+                this.selectLegendItem(item, event);
+            });
+            element.addEventListener("keydown", (event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    this.selectLegendItem(item, event);
+                }
+            });
+        }
+        return element;
+    }
+
+    private renderSingle(data: TimelineData, width: number, height: number): void {
+        const settings = this.formattingSettings;
+        const indexes = data.events.map((_, index) => index);
+        const svg = this.appendSvg(this.chart, width, height);
+        const { x0, x1, xOf } = this.getScale(data, width);
+
+        const axisStyle = this.getTextStyle(settings.dateAxis.font, settings.dateAxis.labelColor);
+        const axisMode = settings.dateAxis.labelMode.value as DateLabelMode;
+        const axisLabels = settings.dateAxis.show.value
+            ? this.getAxisLabels(data, axisMode, xOf, x0, x1, width, axisStyle)
+            : [];
+
+        this.laneIndexes = [indexes];
+        this.laneOf = indexes.map(() => 0);
+        this.drawBand(svg, data, indexes, width, height, {
+            x0,
+            x1,
+            xOf,
+            axisLabels,
+            ticks: axisMode === "startEnd" ? [] : axisLabels.map((label) => label.tickX),
+            gridlines: false,
+            todayX: this.getTodayX(data, xOf),
+            todayLabel: true,
+            margin: MARGIN,
+            fixedLine: false,
+            background: this.theme.background
+        });
+    }
+
+    /**
+     * Lanes are HTML rows inside a vertical scroll container, so that wheel and touch scrolling and
+     * lane-by-lane snapping come from the browser. The date axis stays at the bottom.
+     */
+    private renderLanes(data: TimelineData, lanes: Lane[], width: number, height: number): void {
+        const settings = this.formattingSettings;
+        const nameStyle = this.getTextStyle(settings.legend.font, settings.legend.labelColor);
+        const axisStyle = this.getTextStyle(settings.dateAxis.font, settings.dateAxis.labelColor);
+        const axisLineHeight = axisStyle.fontSize * 1.25;
+        const visibleLanes = Math.max(1, Math.round(settings.lanes.visibleLanes.value));
+
+        const longestName = Math.max(...lanes.map((lane) => measureText(lane.item.label, { ...nameStyle, bold: true })));
+        const nameWidth = Math.round(clamp(longestName + nameStyle.fontSize * 1.2 + 26, 60, width * 0.3));
+        const scrolls = lanes.length > visibleLanes;
+        const bandWidth = Math.max(width - nameWidth - (scrolls ? SCROLLBAR_WIDTH : 0), 1);
+        const { x0, x1, xOf } = this.getScale(data, bandWidth);
+
+        const axisMode = settings.dateAxis.labelMode.value as DateLabelMode;
+        const axisLabels = settings.dateAxis.show.value
+            ? this.getAxisLabels(data, axisMode, xOf, x0, x1, bandWidth, axisStyle)
+            : [];
+        const ticks = axisMode === "startEnd" ? [] : axisLabels.map((label) => label.tickX);
+        const axisRows = axisLabels.reduce((rows, label) => Math.max(rows, label.rowIndex + 1), 0);
+        const todayX = this.getTodayX(data, xOf);
+        const axisHeight = TICK_LENGTH + 3 + (axisRows + (todayX !== null ? 1 : 0)) * axisLineHeight + LANE_MARGIN;
+        const lanesHeight = Math.max(height - axisHeight, MIN_LANE_HEIGHT);
+        const laneHeight = Math.max(MIN_LANE_HEIGHT, lanesHeight / Math.min(visibleLanes, lanes.length));
+
+        const container = document.createElement("div");
+        container.className = "timeline-lanes";
+        container.style.height = `${lanesHeight}px`;
+        container.addEventListener("scroll", () => { this.lanesScrollTop = container.scrollTop; });
+        this.chart.appendChild(container);
+
+        const alternate = settings.lanes.alternateBackground.value && !this.theme.isHighContrast;
+        this.laneIndexes = lanes.map((lane) => lane.indexes);
+        this.laneOf = new Array(data.events.length);
+        lanes.forEach((lane, laneIndex) => {
+            lane.indexes.forEach((index) => { this.laneOf[index] = laneIndex; });
+            const isAlternate = alternate && laneIndex % 2 === 0;
+            const row = document.createElement("div");
+            row.className = isAlternate ? "timeline-lane alternate" : "timeline-lane";
+            row.style.height = `${laneHeight}px`;
+            row.setAttribute("role", "group");
+            row.setAttribute("aria-label", lane.item.label);
+
+            const name = this.createLegendEntry("timeline-lane-name", lane.item, lane.legendIndex, nameStyle, true);
+            name.style.width = `${nameWidth}px`;
+            applyHtmlTextStyle(name, nameStyle);
+            row.appendChild(name);
+            container.appendChild(row);
+
+            const svg = this.appendSvg(row, bandWidth, laneHeight - 1);
+            this.drawBand(svg, data, lane.indexes, bandWidth, laneHeight - 1, {
+                x0,
+                x1,
+                xOf,
+                axisLabels: null,
+                ticks,
+                gridlines: true,
+                todayX,
+                todayLabel: false,
+                margin: LANE_MARGIN,
+                fixedLine: true,
+                background: isAlternate ? ALTERNATE_LANE_COLOR : this.theme.background
+            });
+        });
+        container.scrollTop = this.lanesScrollTop;
+
+        // Shared date axis
+        const axisSvg = this.appendSvg(this.chart, width, axisHeight);
+        const axisGroup = this.appendGroup(axisSvg, "timeline-axis");
+        axisGroup.setAttribute("transform", `translate(${nameWidth} 0)`);
+        axisGroup.setAttribute("aria-hidden", "true");
+        const lineColor = this.theme.isHighContrast ? this.theme.foreground : settings.dateAxis.lineColor.value.value || DEFAULT_LINE_COLOR;
+        appendLine(axisGroup, x0, 0.5, x1, 0.5, GRID_COLOR);
+        ticks.forEach((x) => appendLine(axisGroup, x, 0, x, TICK_LENGTH, lineColor));
+        axisLabels.forEach((label) => {
+            const top = TICK_LENGTH + 3 + label.rowIndex * axisLineHeight;
+            this.drawLabel(axisGroup, label.text, label.x, label.anchor, top, axisLineHeight, axisStyle, false, null);
+        });
+        if (todayX !== null) {
+            const text = this.getString("Label_Today");
+            const labelWidth = measureText(text, axisStyle);
+            const color = this.getTodayColor();
+            const top = TICK_LENGTH + 3 + axisRows * axisLineHeight;
+            const x = clamp(todayX, labelWidth / 2 + 2, bandWidth - labelWidth / 2 - 2);
+            this.drawLabel(axisGroup, text, x, "middle", top, axisLineHeight, { ...axisStyle, color }, false, null);
+        }
+    }
+
+    private getScale(data: TimelineData, width: number): { x0: number; x1: number; xOf: (date: Date) => number } {
+        const maxMarkerSize = Math.max(...data.events.map((event) => this.getMarkerSize(event)));
+        const paddingX = Math.max(16, maxMarkerSize / 2 + 4);
         const x0 = paddingX;
         const x1 = Math.max(paddingX + 1, width - paddingX);
         const minMs = data.minDate.getTime();
         const rangeMs = data.maxDate.getTime() - minMs;
         const xOf = (date: Date) => (rangeMs > 0 ? x0 + ((date.getTime() - minMs) / rangeMs) * (x1 - x0) : (x0 + x1) / 2);
-        const { xs, anchors } = this.getMarkerPositions(data.events, xOf, markerSize, x0, x1);
+        return { x0, x1, xOf };
+    }
 
-        // Date axis labels
+    private getTodayX(data: TimelineData, xOf: (date: Date) => number): number | null {
+        const today = new Date();
+        const inRange = data.maxDate.getTime() > data.minDate.getTime()
+            && today.getTime() >= data.minDate.getTime() && today.getTime() <= data.maxDate.getTime();
+        return this.formattingSettings.todayLine.show.value && inRange ? xOf(today) : null;
+    }
+
+    private getMarkerSize(event: TimelineEvent): number {
+        const size = this.formattingSettings.markers.size.value;
+        return event.icon ? Math.max(size, ICON_MARKER_SIZE) : size;
+    }
+
+    /**
+     * Draws the line, markers, event labels (and for the single timeline, date labels) of a set of events.
+     */
+    private drawBand(svg: SVGSVGElement, data: TimelineData, indexes: number[], width: number, height: number, band: BandOptions): void {
+        const settings = this.formattingSettings;
+        const events = indexes.map((index) => data.events[index]);
+        const markerSize = Math.max(...events.map((event) => this.getMarkerSize(event)));
+        const radius = markerSize / 2;
+        const { xs, anchors } = this.getMarkerPositions(events, band.xOf, markerSize, band.x0, band.x1);
+
+        // Date labels (single timeline only)
         const axisStyle = this.getTextStyle(settings.dateAxis.font, settings.dateAxis.labelColor);
         const axisLineHeight = axisStyle.fontSize * 1.25;
-        const axisMode = settings.dateAxis.labelMode.value as DateLabelMode;
-        const axisLabels = settings.dateAxis.show.value
-            ? this.getAxisLabels(data, axisMode, anchors, xOf, x0, x1, width, axisStyle)
-            : [];
+        const axisLabels = band.axisLabels || [];
         const axisRows = axisLabels.reduce((rows, label) => Math.max(rows, label.rowIndex + 1), 0);
-        const ticks = axisMode === "startEnd" ? [] : axisLabels.map((label) => label.tickX);
-        const axisTop = Math.max(radius, ticks.length > 0 ? TICK_LENGTH : 0) + 3;
+        const axisTicks = band.axisLabels ? band.ticks : [];
+        const axisTop = Math.max(radius, axisTicks.length > 0 ? TICK_LENGTH : 0) + 3;
         const axisArea = axisRows > 0 ? axisTop + axisRows * axisLineHeight : radius;
-
-        // Today line
-        const today = new Date();
-        const showToday = settings.todayLine.show.value && rangeMs > 0
-            && today.getTime() >= minMs && today.getTime() <= data.maxDate.getTime();
-        const todayLabelHeight = showToday ? axisLineHeight + 2 : 0;
+        const todayLabelHeight = band.todayX !== null && band.todayLabel ? axisLineHeight + 2 : 0;
 
         // Event labels: as many rows as fit in the height, the others stay in the tooltip.
         const labelStyle = this.getTextStyle(settings.labels.font, settings.labels.labelColor);
+        const dateStyle: TextStyle | null = settings.labels.showDate.value
+            ? { ...labelStyle, fontSize: labelStyle.fontSize * 0.9, bold: false, underline: false, opacity: 0.75 }
+            : null;
         const labelLineHeight = labelStyle.fontSize * 1.25;
+        const dateLineHeight = dateStyle ? dateStyle.fontSize * 1.2 : 0;
+        const rowHeight = labelLineHeight + dateLineHeight;
         const position = settings.labels.position.value as LabelPosition;
-        const showLabels = settings.labels.show.value;
         const isAbove = (index: number) => position === "above" || (position === "alternate" && index % 2 === 0);
-        const indexes = showLabels ? data.events.map((_, index) => index) : [];
-        const aboveIndexes = indexes.filter(isAbove);
-        const belowIndexes = indexes.filter((index) => !isAbove(index));
-        const fixedAbove = radius + (aboveIndexes.length > 0 ? LABEL_GAP : 0);
-        const fixedBelow = axisArea + (belowIndexes.length > 0 ? LABEL_GAP : 0);
-        const capacity = Math.max(0, Math.floor((height - 2 * MARGIN - todayLabelHeight - fixedAbove - fixedBelow) / labelLineHeight));
+        const positions = settings.labels.show.value ? events.map((_, index) => index) : [];
+        const abovePositions = positions.filter(isAbove);
+        const belowPositions = positions.filter((index) => !isAbove(index));
+        const fixedAbove = radius + (abovePositions.length > 0 ? LABEL_GAP : 0);
+        const fixedBelow = axisArea + (belowPositions.length > 0 ? LABEL_GAP : 0);
+        const capacity = Math.max(0, Math.floor((height - 2 * band.margin - todayLabelHeight - fixedAbove - fixedBelow) / rowHeight));
         const maxRows = settings.labels.maxRows.value;
-        const aboveCapacity = belowIndexes.length === 0 ? capacity : aboveIndexes.length === 0 ? 0 : Math.ceil(capacity / 2);
+        const aboveCapacity = belowPositions.length === 0 ? capacity : abovePositions.length === 0 ? 0 : Math.ceil(capacity / 2);
         const maxAbove = Math.min(aboveCapacity, maxRows);
         const maxBelow = Math.min(capacity - aboveCapacity, maxRows);
-        const aboveLabels = this.layoutEventLabels(data, aboveIndexes, xs, anchors, width, labelStyle, maxAbove);
-        const belowLabels = this.layoutEventLabels(data, belowIndexes, xs, anchors, width, labelStyle, maxBelow);
+        const layoutSide = (sidePositions: number[], rows: number) => this.layoutEventLabels(
+            events, indexes, sidePositions, xs, anchors, width, labelStyle, dateStyle, rows
+        );
+        const aboveLabels = layoutSide(abovePositions, maxAbove);
+        const belowLabels = layoutSide(belowPositions, maxBelow);
 
-        // The drawing is centred vertically.
-        const aboveHeight = fixedAbove + countRows(aboveLabels) * labelLineHeight;
-        const belowHeight = fixedBelow + countRows(belowLabels) * labelLineHeight;
-        const freeHeight = height - 2 * MARGIN - todayLabelHeight - aboveHeight - belowHeight;
-        const lineY = MARGIN + todayLabelHeight + Math.max(0, freeHeight / 2) + aboveHeight;
+        // The drawing is centred vertically. Lanes reserve all their label rows so that their lines align.
+        const usedAbove = band.fixedLine && abovePositions.length > 0 ? maxAbove : countRows(aboveLabels);
+        const usedBelow = band.fixedLine && belowPositions.length > 0 ? maxBelow : countRows(belowLabels);
+        const aboveHeight = fixedAbove + usedAbove * rowHeight;
+        const belowHeight = fixedBelow + usedBelow * rowHeight;
+        const freeHeight = height - 2 * band.margin - todayLabelHeight - aboveHeight - belowHeight;
+        const lineY = band.margin + todayLabelHeight + Math.max(0, freeHeight / 2) + aboveHeight;
 
-        if (showToday) {
-            this.drawTodayLine(xOf(today), width, height, axisStyle);
+        if (band.gridlines && !this.theme.isHighContrast) {
+            const grid = this.appendGroup(svg, "timeline-grid");
+            band.ticks.forEach((x) => appendLine(grid, x, 0, x, height, GRID_COLOR));
         }
-        this.drawAxisLine(x0 - radius, x1 + radius, lineY, ticks);
+        if (band.todayX !== null) {
+            this.drawTodayLine(svg, band.todayX, width, band.todayLabel ? band.margin : null, band.todayLabel ? height - band.margin : height, axisStyle);
+        }
+        this.drawAxisLine(svg, band.x0 - radius, band.x1 + radius, lineY, axisTicks);
 
         // Leader lines go under the labels, and labels get a background so that no line crosses their text.
         const leaderLines = settings.labels.leaderLines.value;
-        const leaderGroup = this.appendGroup("timeline-leader-lines");
-        const labelGroup = this.appendGroup("timeline-labels");
+        const leaderGroup = this.appendGroup(svg, "timeline-leader-lines");
+        const labelGroup = this.appendGroup(svg, "timeline-labels");
         labelGroup.setAttribute("aria-hidden", "true");
         axisLabels.forEach((label) => {
             const top = lineY + axisTop + label.rowIndex * axisLineHeight;
-            this.drawLabel(labelGroup, label.text, label.x, label.anchor, top, axisLineHeight, axisStyle, leaderLines, null);
+            this.drawLabel(labelGroup, label.text, label.x, label.anchor, top, axisLineHeight, axisStyle, leaderLines, null, band.background);
         });
-        aboveLabels.forEach((layout) => {
-            const bottom = lineY - radius - LABEL_GAP - layout.rowIndex * labelLineHeight;
+        const drawEventLabel = (layout: LabelLayout, top: number, leaderFrom: number, leaderTo: number) => {
             if (leaderLines) {
-                this.drawLeaderLine(leaderGroup, layout, lineY - radius, bottom, data.events[layout.key]);
+                this.drawLeaderLine(leaderGroup, layout, leaderFrom, leaderTo, data.events[layout.key]);
             }
-            this.drawLabel(labelGroup, layout.text, layout.x, "middle", bottom - labelLineHeight, labelLineHeight, labelStyle, leaderLines, layout.key);
+            if (leaderLines) {
+                appendRect(labelGroup, layout.x - layout.width / 2 - 2, top, layout.width + 4, layout.subText ? rowHeight : labelLineHeight, band.background);
+            }
+            this.drawLabel(labelGroup, layout.text, layout.x, "middle", top, labelLineHeight, labelStyle, false, layout.key);
+            if (layout.subText) {
+                this.drawLabel(labelGroup, layout.subText, layout.x, "middle", top + labelLineHeight, dateLineHeight, dateStyle, false, layout.key);
+            }
+        };
+        aboveLabels.forEach((layout) => {
+            const bottom = lineY - radius - LABEL_GAP - layout.rowIndex * rowHeight;
+            const top = bottom - (layout.subText ? rowHeight : labelLineHeight);
+            drawEventLabel(layout, top, lineY - radius, top + (layout.subText ? rowHeight : labelLineHeight));
         });
         belowLabels.forEach((layout) => {
-            const top = lineY + fixedBelow + layout.rowIndex * labelLineHeight;
-            if (leaderLines) {
-                this.drawLeaderLine(leaderGroup, layout, lineY + radius, top, data.events[layout.key]);
-            }
-            this.drawLabel(labelGroup, layout.text, layout.x, "middle", top, labelLineHeight, labelStyle, leaderLines, layout.key);
+            const top = lineY + fixedBelow + layout.rowIndex * rowHeight;
+            drawEventLabel(layout, top, lineY + radius, top);
         });
 
-        this.drawMarkers(data, xs, lineY, markerSize);
+        this.drawMarkers(svg, data, indexes, xs, lineY);
     }
 
     /**
@@ -467,7 +711,6 @@ export class Visual implements IVisual {
     private getAxisLabels(
         data: TimelineData,
         mode: DateLabelMode,
-        anchors: number[],
         xOf: (date: Date) => number,
         x0: number,
         x1: number,
@@ -487,6 +730,7 @@ export class Visual implements IVisual {
 
         if (mode === "eventDates") {
             // One label per date, centred under that date's markers.
+            const { anchors } = this.getMarkerPositions(data.events, xOf, this.formattingSettings.markers.size.value, x0, x1);
             const items: LabelItem[] = [];
             data.events.forEach((event, index) => {
                 if (index === 0 || event.date.getTime() !== data.events[index - 1].date.getTime()) {
@@ -506,108 +750,102 @@ export class Visual implements IVisual {
         });
     }
 
+    /**
+     * `positions` are positions in `events`; the label keys are the matching indexes in TimelineData.events.
+     */
     private layoutEventLabels(
-        data: TimelineData,
+        events: TimelineEvent[],
         indexes: number[],
+        positions: number[],
         xs: number[],
         anchors: number[],
         width: number,
         style: TextStyle,
+        dateStyle: TextStyle | null,
         maxRows: number
     ): LabelLayout[] {
-        if (indexes.length === 0 || maxRows <= 0) {
+        if (positions.length === 0 || maxRows <= 0) {
             return [];
         }
-        const widths = getLabelWidths(indexes.map((index) => anchors[index]), MIN_LABEL_WIDTH, width - 4);
-        const items = indexes.map((index, position): LabelItem => ({
-            x: xs[index],
-            maxWidth: widths[position],
-            text: data.events[index].name,
-            key: index
+        const widths = getLabelWidths(positions.map((position) => anchors[position]), MIN_LABEL_WIDTH, width - 4);
+        const items = positions.map((position, itemIndex): LabelItem => ({
+            x: xs[position],
+            maxWidth: widths[itemIndex],
+            text: events[position].name,
+            subText: dateStyle ? events[position].dateText : undefined,
+            key: indexes[position]
         }));
-        return layoutLabels(items, width, style, LABEL_ROW_GAP, maxRows);
+        return layoutLabels(items, width, style, LABEL_ROW_GAP, maxRows, dateStyle || undefined);
     }
 
-    private appendGroup(className: string): SVGGElement {
+    private appendSvg(parent: HTMLElement, width: number, height: number): SVGSVGElement {
+        const svg = document.createElementNS(SVG_NS, "svg");
+        svg.classList.add("timeline-svg");
+        svg.setAttribute("width", width.toString());
+        svg.setAttribute("height", height.toString());
+        parent.appendChild(svg);
+        return svg;
+    }
+
+    private appendGroup(svg: SVGElement, className: string): SVGGElement {
         const group = document.createElementNS(SVG_NS, "g");
         group.setAttribute("class", className);
-        this.svg.appendChild(group);
+        svg.appendChild(group);
         return group;
     }
 
-    private drawTodayLine(x: number, width: number, height: number, style: TextStyle): void {
-        const settings = this.formattingSettings.todayLine;
-        const color = this.theme.isHighContrast ? this.theme.foreground : settings.lineColor.value.value || DEFAULT_TODAY_COLOR;
-        const group = this.appendGroup("timeline-today");
+    private getTodayColor(): string {
+        return this.theme.isHighContrast ? this.theme.foreground : this.formattingSettings.todayLine.lineColor.value.value || DEFAULT_TODAY_COLOR;
+    }
+
+    /**
+     * Draws the today line from `labelTop` (below its label) or from the top when there is no label, down to `bottom`.
+     */
+    private drawTodayLine(svg: SVGSVGElement, x: number, width: number, labelTop: number | null, bottom: number, style: TextStyle): void {
+        const color = this.getTodayColor();
+        const group = this.appendGroup(svg, "timeline-today");
         group.setAttribute("aria-hidden", "true");
 
-        const line = document.createElementNS(SVG_NS, "line");
-        line.setAttribute("x1", x.toString());
-        line.setAttribute("x2", x.toString());
-        line.setAttribute("y1", (MARGIN + style.fontSize * 1.25 + 2).toString());
-        line.setAttribute("y2", (height - MARGIN).toString());
-        line.setAttribute("stroke", color);
+        const line = appendLine(group, x, labelTop !== null ? labelTop + style.fontSize * 1.25 + 2 : 0, x, bottom, color);
         line.setAttribute("stroke-width", "1.5");
         const dashes: Record<LineStyle, string> = { solid: "", dashed: "5 4", dotted: "1 3" };
-        const dash = dashes[settings.lineStyle.value as LineStyle];
+        const dash = dashes[this.formattingSettings.todayLine.lineStyle.value as LineStyle];
         if (dash) {
             line.setAttribute("stroke-dasharray", dash);
             line.setAttribute("stroke-linecap", "round");
         }
-        group.appendChild(line);
 
-        const text = this.getString("Label_Today");
-        const labelWidth = measureText(text, style);
-        const label = document.createElementNS(SVG_NS, "text");
-        label.setAttribute("x", clamp(x, labelWidth / 2 + 2, width - labelWidth / 2 - 2).toString());
-        label.setAttribute("y", MARGIN.toString());
-        label.setAttribute("text-anchor", "middle");
-        label.setAttribute("dominant-baseline", "hanging");
-        applySvgTextStyle(label, { ...style, color });
-        label.textContent = text;
-        group.appendChild(label);
+        if (labelTop !== null) {
+            const text = this.getString("Label_Today");
+            const labelWidth = measureText(text, style);
+            const label = document.createElementNS(SVG_NS, "text");
+            label.setAttribute("x", clamp(x, labelWidth / 2 + 2, width - labelWidth / 2 - 2).toString());
+            label.setAttribute("y", labelTop.toString());
+            label.setAttribute("text-anchor", "middle");
+            label.setAttribute("dominant-baseline", "hanging");
+            applySvgTextStyle(label, { ...style, color });
+            label.textContent = text;
+            group.appendChild(label);
+        }
     }
 
-    private drawAxisLine(startX: number, endX: number, lineY: number, ticks: number[]): void {
+    private drawAxisLine(svg: SVGSVGElement, startX: number, endX: number, lineY: number, ticks: number[]): void {
         const settings = this.formattingSettings.dateAxis;
         const color = this.theme.isHighContrast ? this.theme.foreground : settings.lineColor.value.value || DEFAULT_LINE_COLOR;
         const lineWidth = settings.lineWidth.value;
-        const group = this.appendGroup("timeline-axis");
+        const group = this.appendGroup(svg, "timeline-axis");
         group.setAttribute("aria-hidden", "true");
 
-        const line = document.createElementNS(SVG_NS, "line");
-        line.setAttribute("x1", startX.toString());
-        line.setAttribute("x2", endX.toString());
-        line.setAttribute("y1", lineY.toString());
-        line.setAttribute("y2", lineY.toString());
-        line.setAttribute("stroke", color);
+        const line = appendLine(group, startX, lineY, endX, lineY, color);
         line.setAttribute("stroke-width", lineWidth.toString());
         line.setAttribute("stroke-linecap", "round");
-        group.appendChild(line);
-
-        ticks.forEach((x) => {
-            const tick = document.createElementNS(SVG_NS, "line");
-            tick.setAttribute("x1", x.toString());
-            tick.setAttribute("x2", x.toString());
-            tick.setAttribute("y1", lineY.toString());
-            tick.setAttribute("y2", (lineY + lineWidth / 2 + TICK_LENGTH).toString());
-            tick.setAttribute("stroke", color);
-            tick.setAttribute("stroke-width", "1");
-            group.appendChild(tick);
-        });
+        ticks.forEach((x) => appendLine(group, x, lineY, x, lineY + lineWidth / 2 + TICK_LENGTH, color));
     }
 
     private drawLeaderLine(group: SVGGElement, layout: LabelLayout, fromY: number, toY: number, event: TimelineEvent): void {
-        const line = document.createElementNS(SVG_NS, "line");
-        line.setAttribute("x1", layout.anchorX.toString());
-        line.setAttribute("x2", layout.anchorX.toString());
-        line.setAttribute("y1", fromY.toString());
-        line.setAttribute("y2", toY.toString());
-        line.setAttribute("stroke", this.theme.isHighContrast ? this.theme.foreground : event.color);
+        const line = appendLine(group, layout.anchorX, fromY, layout.anchorX, toY, this.theme.isHighContrast ? this.theme.foreground : event.color);
         line.setAttribute("stroke-opacity", this.theme.isHighContrast ? "1" : "0.5");
-        line.setAttribute("stroke-width", "1");
         line.setAttribute("data-index", layout.key.toString());
-        group.appendChild(line);
     }
 
     /**
@@ -623,18 +861,13 @@ export class Visual implements IVisual {
         rowHeight: number,
         style: TextStyle,
         withBackground: boolean,
-        eventIndex: number | null
+        eventIndex: number | null,
+        background: string = this.theme.background
     ): void {
         if (withBackground) {
             const width = measureText(content, style);
             const left = anchor === "start" ? x : anchor === "end" ? x - width : x - width / 2;
-            const background = document.createElementNS(SVG_NS, "rect");
-            background.setAttribute("x", (left - 2).toString());
-            background.setAttribute("y", top.toString());
-            background.setAttribute("width", (width + 4).toString());
-            background.setAttribute("height", rowHeight.toString());
-            background.setAttribute("fill", this.theme.background);
-            group.appendChild(background);
+            appendRect(group, left - 2, top, width + 4, rowHeight, background);
         }
         const text = document.createElementNS(SVG_NS, "text");
         text.setAttribute("x", x.toString());
@@ -650,14 +883,20 @@ export class Visual implements IVisual {
         group.appendChild(text);
     }
 
-    private drawMarkers(data: TimelineData, xs: number[], lineY: number, markerSize: number): void {
-        const group = this.appendGroup("timeline-markers");
-        this.focusedIndex = Math.min(this.focusedIndex, data.events.length - 1);
+    private getIconColor(): string {
+        return this.theme.isHighContrast ? this.theme.background : "#FFFFFF";
+    }
+
+    private drawMarkers(svg: SVGSVGElement, data: TimelineData, indexes: number[], xs: number[], lineY: number): void {
+        const group = this.appendGroup(svg, "timeline-markers");
         const interactive = this.allowInteractions();
+        const baseSize = this.formattingSettings.markers.size.value;
         // When thousands of markers overlap, their white outlines would hide every fill but the last one.
-        const crowded = xs.length > 1 && (xs[xs.length - 1] - xs[0]) / (xs.length - 1) < markerSize / 2;
+        const crowded = xs.length > 1 && (xs[xs.length - 1] - xs[0]) / (xs.length - 1) < baseSize / 2;
         const strokeWidth = this.theme.isHighContrast ? "2" : crowded ? "0" : "1";
-        data.events.forEach((event, index) => {
+        indexes.forEach((index, position) => {
+            const event = data.events[index];
+            const size = this.getMarkerSize(event);
             const marker = document.createElementNS(SVG_NS, "g");
             marker.setAttribute("class", "timeline-marker");
             marker.setAttribute("data-index", index.toString());
@@ -666,12 +905,15 @@ export class Visual implements IVisual {
             if (interactive) {
                 marker.setAttribute("tabindex", index === this.focusedIndex ? "0" : "-1");
             }
-            const shape = createShape(event.shape, xs[index], lineY, markerSize);
+            const shape = createShape(event.icon ? "circle" : event.shape, xs[position], lineY, size);
             shape.setAttribute("class", "timeline-marker-shape");
             shape.setAttribute("fill", event.color);
             shape.setAttribute("stroke", this.theme.isHighContrast ? this.theme.foreground : this.theme.background);
             shape.setAttribute("stroke-width", strokeWidth);
             marker.appendChild(shape);
+            if (event.icon) {
+                marker.appendChild(createIcon(event.icon, xs[position], lineY, size * 0.62, this.getIconColor()));
+            }
             group.appendChild(marker);
         });
     }
@@ -684,7 +926,7 @@ export class Visual implements IVisual {
     }
 
     private bindChartEvents(): void {
-        this.svg.addEventListener("click", (event: MouseEvent) => {
+        this.chart.addEventListener("click", (event: MouseEvent) => {
             if (!this.data || !this.allowInteractions()) {
                 return;
             }
@@ -697,7 +939,7 @@ export class Visual implements IVisual {
             this.selectEvents([this.data.events[index].selectionId], isMultiSelect(event));
         });
 
-        this.svg.addEventListener("contextmenu", (event: MouseEvent) => {
+        this.chart.addEventListener("contextmenu", (event: MouseEvent) => {
             if (!this.data || !this.allowInteractions()) {
                 return;
             }
@@ -707,7 +949,7 @@ export class Visual implements IVisual {
             event.preventDefault();
         });
 
-        this.svg.addEventListener("pointermove", (event: PointerEvent) => {
+        this.chart.addEventListener("pointermove", (event: PointerEvent) => {
             const index = this.getEventIndex(event.target);
             if (index === null) {
                 this.hideTooltip(event.pointerType === "touch");
@@ -715,18 +957,18 @@ export class Visual implements IVisual {
             }
             this.showTooltip(index, [event.clientX, event.clientY], event.pointerType === "touch");
         });
-        this.svg.addEventListener("pointerleave", (event: PointerEvent) => this.hideTooltip(event.pointerType === "touch"));
+        this.chart.addEventListener("pointerleave", (event: PointerEvent) => this.hideTooltip(event.pointerType === "touch"));
 
-        this.svg.addEventListener("keydown", (event: KeyboardEvent) => this.onMarkerKeyDown(event));
+        this.chart.addEventListener("keydown", (event: KeyboardEvent) => this.onMarkerKeyDown(event));
         // Keyboard users get the tooltip of the focused marker.
-        this.svg.addEventListener("focusin", (event: FocusEvent) => {
+        this.chart.addEventListener("focusin", (event: FocusEvent) => {
             const index = this.getEventIndex(event.target);
             if (index !== null) {
                 const rect = (event.target as Element).getBoundingClientRect();
                 this.showTooltip(index, [rect.left + rect.width / 2, rect.top + rect.height / 2], false);
             }
         });
-        this.svg.addEventListener("focusout", () => this.hideTooltip(false));
+        this.chart.addEventListener("focusout", () => this.hideTooltip(false));
     }
 
     /**
@@ -741,27 +983,38 @@ export class Visual implements IVisual {
         return Number.isInteger(index) && index < this.data.events.length ? index : null;
     }
 
+    /**
+     * Left/Right move to the previous/next event of the lane, Up/Down to the closest event of the lane above/below.
+     * With a single timeline, Up/Down behave like Left/Right.
+     */
     private onMarkerKeyDown(event: KeyboardEvent): void {
         const index = this.getEventIndex(event.target);
         if (index === null || !this.allowInteractions()) {
             return;
         }
-        const last = this.data.events.length - 1;
+        const laneIndex = this.laneOf[index] || 0;
+        const lane = this.laneIndexes[laneIndex] || [index];
+        const position = lane.indexOf(index);
+        const singleLane = this.laneIndexes.length <= 1;
         let next: number | null = null;
         switch (event.key) {
             case "ArrowRight":
-            case "ArrowDown":
-                next = Math.min(index + 1, last);
+                next = lane[Math.min(position + 1, lane.length - 1)];
                 break;
             case "ArrowLeft":
+                next = lane[Math.max(position - 1, 0)];
+                break;
+            case "ArrowDown":
+                next = singleLane ? lane[Math.min(position + 1, lane.length - 1)] : this.getClosestInLane(index, laneIndex + 1);
+                break;
             case "ArrowUp":
-                next = Math.max(index - 1, 0);
+                next = singleLane ? lane[Math.max(position - 1, 0)] : this.getClosestInLane(index, laneIndex - 1);
                 break;
             case "Home":
-                next = 0;
+                next = lane[0];
                 break;
             case "End":
-                next = last;
+                next = lane[lane.length - 1];
                 break;
             case "Enter":
             case " ":
@@ -776,17 +1029,26 @@ export class Visual implements IVisual {
         }
     }
 
+    private getClosestInLane(index: number, laneIndex: number): number {
+        const lane = this.laneIndexes[laneIndex];
+        if (!lane) {
+            return index;
+        }
+        const time = this.data.events[index].date.getTime();
+        return lane.reduce((best, candidate) =>
+            Math.abs(this.data.events[candidate].date.getTime() - time) < Math.abs(this.data.events[best].date.getTime() - time) ? candidate : best);
+    }
+
     /**
      * Roving tabindex: only one marker is in the tab order, the arrow keys move between markers.
      */
     private focusMarker(index: number): void {
-        const markers = this.svg.querySelectorAll<SVGGElement>(".timeline-marker");
-        const previous = markers[this.focusedIndex];
+        const previous = this.chart.querySelector(".timeline-marker[tabindex=\"0\"]");
         if (previous) {
             previous.setAttribute("tabindex", "-1");
         }
         this.focusedIndex = index;
-        const marker = markers[index];
+        const marker = this.chart.querySelector<SVGGElement>(`.timeline-marker[data-index="${index}"]`);
         if (marker) {
             marker.setAttribute("tabindex", "0");
             marker.focus();
@@ -827,20 +1089,23 @@ export class Visual implements IVisual {
         const hasSelection = this.selectedKeys.size > 0;
         const isSelected = (index: number) => !hasSelection || this.selectedKeys.has(events[index].selectionId.getKey());
 
-        this.svg.querySelectorAll("[data-index]").forEach((element) => {
+        this.chart.querySelectorAll("[data-index]").forEach((element) => {
             const selected = isSelected(Number(element.getAttribute("data-index")));
             if (element.classList.contains("timeline-marker")) {
                 element.setAttribute("aria-selected", String(hasSelection && selected));
                 if (this.theme.isHighContrast) {
                     const fill = !hasSelection ? this.theme.foreground : selected ? this.theme.foregroundSelected : this.theme.background;
                     element.firstElementChild.setAttribute("fill", fill);
+                    if (element.children.length > 1) {
+                        element.lastElementChild.setAttribute("fill", fill === this.theme.background ? this.theme.foreground : this.theme.background);
+                    }
                     return;
                 }
             }
             element.classList.toggle(DIMMED_CLASS, !selected);
         });
 
-        this.legend.querySelectorAll(".timeline-legend-item").forEach((element) => {
+        this.root.querySelectorAll(".timeline-legend-item, .timeline-lane-name").forEach((element) => {
             const item = this.data.legendItems[Number(element.getAttribute("data-legend-index"))];
             const selected = !hasSelection || item.events.some((event) => this.selectedKeys.has(event.selectionId.getKey()));
             element.classList.toggle(DIMMED_CLASS, !selected);
@@ -901,6 +1166,29 @@ function isMultiSelect(event: MouseEvent | KeyboardEvent): boolean {
     return event.ctrlKey || event.metaKey || event.shiftKey;
 }
 
+function appendLine(parent: SVGElement, x1: number, y1: number, x2: number, y2: number, color: string): SVGLineElement {
+    const line = document.createElementNS(SVG_NS, "line");
+    line.setAttribute("x1", x1.toString());
+    line.setAttribute("y1", y1.toString());
+    line.setAttribute("x2", x2.toString());
+    line.setAttribute("y2", y2.toString());
+    line.setAttribute("stroke", color);
+    line.setAttribute("stroke-width", "1");
+    parent.appendChild(line);
+    return line;
+}
+
+function appendRect(parent: SVGElement, x: number, y: number, width: number, height: number, fill: string): SVGRectElement {
+    const rect = document.createElementNS(SVG_NS, "rect");
+    rect.setAttribute("x", x.toString());
+    rect.setAttribute("y", y.toString());
+    rect.setAttribute("width", width.toString());
+    rect.setAttribute("height", height.toString());
+    rect.setAttribute("fill", fill);
+    parent.appendChild(rect);
+    return rect;
+}
+
 function applySvgTextStyle(element: SVGTextElement, style: TextStyle): void {
     element.style.fontFamily = style.fontFamily;
     element.style.fontSize = `${style.fontSize}px`;
@@ -908,6 +1196,7 @@ function applySvgTextStyle(element: SVGTextElement, style: TextStyle): void {
     element.style.fontStyle = style.italic ? "italic" : "normal";
     element.style.textDecoration = style.underline ? "underline" : "none";
     element.style.fill = style.color;
+    element.style.fillOpacity = style.opacity !== undefined ? style.opacity.toString() : "";
 }
 
 function applyHtmlTextStyle(element: HTMLElement, style: TextStyle): void {

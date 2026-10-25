@@ -16,6 +16,8 @@ export interface TextStyle {
     italic: boolean;
     underline: boolean;
     color: string;
+    /** Opacity of the text, 1 when undefined. */
+    opacity?: number;
 }
 
 export interface LabelItem {
@@ -23,6 +25,8 @@ export interface LabelItem {
     x: number;
     maxWidth: number;
     text: string;
+    /** Optional second line, such as the event date. */
+    subText?: string;
     key: number;
 }
 
@@ -32,6 +36,7 @@ export interface LabelLayout {
     x: number;
     anchorX: number;
     text: string;
+    subText?: string;
     width: number;
     rowIndex: number;
 }
@@ -83,8 +88,16 @@ export function getLabelWidths(anchors: number[], minWidth: number, maxWidth: nu
 /**
  * Places labels on rows: a label goes on the first row where it does not overlap the previous label.
  * Labels that would need more than `maxRows` rows are left out (they stay available in the tooltip).
+ * `subStyle` is the style of the optional second line of the labels.
  */
-export function layoutLabels(items: LabelItem[], visualWidth: number, style: TextStyle, rowGap: number, maxRows: number): LabelLayout[] {
+export function layoutLabels(
+    items: LabelItem[],
+    visualWidth: number,
+    style: TextStyle,
+    rowGap: number,
+    maxRows: number,
+    subStyle?: TextStyle
+): LabelLayout[] {
     const layouts: LabelLayout[] = [];
     const rowEnds: number[] = [];
 
@@ -93,7 +106,8 @@ export function layoutLabels(items: LabelItem[], visualWidth: number, style: Tex
         if (!text) {
             return;
         }
-        const width = measureText(text, style);
+        const subText = item.subText && subStyle ? fitText(item.subText, item.maxWidth, subStyle) : undefined;
+        const width = Math.max(measureText(text, style), subText ? measureText(subText, subStyle) : 0);
         // Keep the label inside the visual: labels near an edge are shifted inward.
         const x = width >= visualWidth - LABEL_EDGE_MARGIN * 2
             ? visualWidth / 2
@@ -108,7 +122,7 @@ export function layoutLabels(items: LabelItem[], visualWidth: number, style: Tex
             return;
         }
         rowEnds[rowIndex] = x + width / 2;
-        layouts.push({ key: item.key, x, anchorX: item.x, text, width, rowIndex });
+        layouts.push({ key: item.key, x, anchorX: item.x, text, subText, width, rowIndex });
     });
 
     return layouts;
