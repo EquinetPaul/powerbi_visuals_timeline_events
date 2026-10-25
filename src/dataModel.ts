@@ -48,8 +48,18 @@ export interface LegendItem {
     selector: powerbi.data.Selector | null;
 }
 
+/** A distinct event name, with the icon chosen for it in the format pane. */
+export interface EventType {
+    name: string;
+    /** "auto" (Icon field, then legend), "none", or an icon name. */
+    iconName: string;
+    selector: powerbi.data.Selector;
+}
+
 export interface TimelineData {
     events: TimelineEvent[];
+    /** Distinct event names that can get an icon in the format pane. Empty when the event data view is missing. */
+    eventTypes: EventType[];
     legendItems: LegendItem[];
     legendTitle: string;
     /** True when the legend lists event names (no Legend field, "Shape by event name" on). */
@@ -87,10 +97,13 @@ export function getTableDataView(dataViews: DataView[] | undefined): DataView | 
     return (dataViews || []).find((dataView) => !!(dataView && dataView.table)) || (dataViews && dataViews[0]);
 }
 
-function getLegendCategory(dataViews: DataView[] | undefined): DataViewCategoryColumn | null {
+/**
+ * The categorical data view whose category has the given role: "legend" or "event".
+ */
+function getRoleCategory(dataViews: DataView[] | undefined, role: string): DataViewCategoryColumn | null {
     const dataView = (dataViews || []).find((view) => {
         const categories = view && view.categorical && view.categorical.categories;
-        return !!(categories && categories[0] && categories[0].source.roles && categories[0].source.roles.legend);
+        return !!(categories && categories[0] && categories[0].source.roles && categories[0].source.roles[role]);
     });
     return dataView ? dataView.categorical.categories[0] : null;
 }
@@ -166,15 +179,17 @@ export function buildTimelineData(
     events.sort((a, b) => a.date.getTime() - b.date.getTime() || a.rowIndex - b.rowIndex);
 
     const legendItems = legendColumnIndex !== -1
-        ? buildLegendItems(events, getLegendValues(getLegendCategory(dataViews), legendFormatter, host), host, settings, colorOptions)
+        ? buildLegendItems(events, getLegendValues(getRoleCategory(dataViews, "legend"), legendFormatter, host), host, settings, colorOptions)
         : [];
-    applyEventStyles(events, legendItems, host, settings, colorOptions);
+    const eventTypes = getEventTypes(getRoleCategory(dataViews, "event"), eventFormatter, host);
+    applyEventStyles(events, legendItems, eventTypes, host, settings, colorOptions);
 
     const legendByEventName = legendColumnIndex === -1 && settings.markers.shapeByEvent.value;
     return {
         status: "ok",
         data: {
             events,
+            eventTypes,
             legendItems: legendByEventName ? buildEventNameLegendItems(events) : legendItems,
             legendTitle: legendColumnIndex !== -1 ? columns[legendColumnIndex].displayName : columns[eventColumnIndex].displayName,
             legendByEventName,
@@ -245,6 +260,24 @@ function buildLegendItems(
     return items;
 }
 
+/**
+ * Icons picked per event name are stored against the event name's identity, like the legend colors.
+ */
+function getEventTypes(category: DataViewCategoryColumn | null, formatter: IValueFormatter, host: IVisualHost): EventType[] {
+    if (!category) {
+        return [];
+    }
+    return category.values.map((value, index): EventType => {
+        const objects = category.objects && category.objects[index];
+        const iconName = objects && objects["icons"] && objects["icons"]["eventIcon"];
+        return {
+            name: formatText(value, formatter),
+            iconName: typeof iconName === "string" ? iconName : "auto",
+            selector: host.createSelectionIdBuilder().withCategory(category, index).createSelectionId().getSelector()
+        };
+    });
+}
+
 function getFillColor(value: powerbi.DataViewPropertyValue): string | null {
     const fill = value as powerbi.Fill;
     return fill && fill.solid && fill.solid.color ? fill.solid.color : null;
@@ -253,6 +286,7 @@ function getFillColor(value: powerbi.DataViewPropertyValue): string | null {
 function applyEventStyles(
     events: TimelineEvent[],
     legendItems: LegendItem[],
+    eventTypes: EventType[],
     host: IVisualHost,
     settings: VisualFormattingSettingsModel,
     colorOptions: ColorOptions
@@ -262,12 +296,18 @@ function applyEventStyles(
     const defaultColor = colorOptions.isHighContrast
         ? colorOptions.foreground
         : settings.colors.defaultColor.value.value || host.colorPalette.getColor("defaultColor").value;
-    const defaultIcon = settings.icons.show.value ? resolveIcon(settings.icons.defaultIcon.value) : null;
+    const showIcons = settings.icons.show.value;
+    const defaultIcon = showIcons ? resolveIcon(settings.icons.defaultIcon.value) : null;
+    const iconByEventName = new Map(eventTypes.map((eventType) => [eventType.name, eventType.iconName]));
     events.forEach((event) => {
         const legendItem = event.legend !== null ? legendByLabel.get(event.legend || "") : undefined;
         event.color = legendItem ? legendItem.color : defaultColor;
-        // An Icon field value wins over the icon of the legend value, which wins over the icon for all events.
-        event.icon = event.icon || (legendItem ? legendItem.icon : defaultIcon);
+        // An icon chosen for the event name in the format pane wins; on "auto", the Icon field value wins
+        // over the icon of the legend value, which wins over the icon for all events.
+        const eventTypeIcon = iconByEventName.get(event.name);
+        event.icon = showIcons && eventTypeIcon && eventTypeIcon !== "auto"
+            ? resolveIcon(eventTypeIcon)
+            : event.icon || (legendItem ? legendItem.icon : defaultIcon);
         event.shape = shapesByEventName
             ? shapesByEventName.get(event.name)
             : legendItem ? legendItem.shape : settings.markers.shape.value as MarkerShape;

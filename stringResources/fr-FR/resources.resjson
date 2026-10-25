@@ -117,5 +117,7 @@
     "Icon_cloud": "Nuage",
     "Icon_lock": "Cadenas",
     "Icon_shield": "Bouclier",
-    "Icon_chart": "Graphique"
+    "Icon_chart": "Graphique",
+    "Icon_auto": "Automatique",
+    "Group_ForAllEvents": "Tous les événements"
 }

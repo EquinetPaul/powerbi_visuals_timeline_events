@@ -252,16 +252,25 @@ export class Visual implements IVisual {
             }))
         ];
 
-        icons.defaultIcon.visible = !hasLegend;
-        icons.slices = [
-            icons.defaultIcon,
-            ...legendItems.map((item) => new formattingSettings.AutoDropdown({
-                name: "icon",
-                displayName: item.label,
-                value: item.iconName,
-                selector: item.selector
-            }))
-        ];
+        // Icons: one group for all events (no legend), one per legend value, one per event name.
+        icons.allEvents.visible = !hasLegend;
+        icons.byLegend.displayName = hasLegend ? this.data.legendColumnName : "";
+        icons.byLegend.visible = legendItems.length > 0;
+        icons.byLegend.slices = legendItems.map((item) => new formattingSettings.AutoDropdown({
+            name: "icon",
+            displayName: item.label,
+            value: item.iconName,
+            selector: item.selector
+        }));
+        const eventTypes = this.data ? this.data.eventTypes : [];
+        icons.byEvent.displayName = this.data ? this.data.eventColumnName : "";
+        icons.byEvent.visible = eventTypes.length > 0;
+        icons.byEvent.slices = eventTypes.map((eventType) => new formattingSettings.AutoDropdown({
+            name: "eventIcon",
+            displayName: eventType.name,
+            value: eventType.iconName,
+            selector: eventType.selector
+        }));
     }
 
     private renderMessage(text: string, title: string | null): void {

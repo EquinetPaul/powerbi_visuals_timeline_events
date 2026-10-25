@@ -9,8 +9,8 @@ Custom Power BI visual that displays events on a horizontal timeline.
 - Events colored by **Legend** group with the report theme colors, and a color picker per group
 - **Lanes**: one row per Legend group, with a shared date axis; lanes scroll vertically (mouse wheel, touch,
   scroll bar) when there are more groups than the "Visible lanes" setting
-- **Icons** in the markers: one per Legend group (Icons card), one for all events, or one per event with the
-  Icon field; optional **date under the event name**
+- **Icons** in the markers, set per event name or per Legend group in the Icons card, for all events, or from
+  the Icon field; optional **date under the event name**
 - Event labels above, below or alternating, stacked on rows with leader lines; labels that don't fit are hidden
 - Same-date events spread side by side, never on top of each other
 - Native Power BI tooltips, including report page tooltips
@@ -36,6 +36,12 @@ Custom Power BI visual that displays events on a horizontal timeline.
 Icons come from [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) (MIT License,
 Copyright (c) 2020 Microsoft Corporation), the icon set of Microsoft 365 and Power BI. A selection is embedded in
 `src/icons.ts`: Power BI visuals may not load files from the internet. Matching ignores case and accents.
+
+Which icon an event gets, from the strongest to the weakest choice:
+1. The icon chosen for its **event name** in the Icons card ("None" removes the icon, "Automatic" moves on).
+2. The value of the **Icon** field on its row.
+3. The icon chosen for its **Legend** value in the Icons card.
+4. Without a Legend field, the icon chosen for **all events**.
 
 | Icon | French names |
 |------|--------------|

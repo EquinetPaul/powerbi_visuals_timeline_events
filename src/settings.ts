@@ -139,17 +139,21 @@ class MarkersCard extends FormattingSettingsCard {
 }
 
 /**
- * Icons drawn inside the markers. The per-legend-value icon dropdowns are added at runtime;
- * an Icon field value, when present, takes precedence.
+ * Icons drawn inside the markers. The dropdowns per legend value and per event name are added at runtime,
+ * once the values are known; their groups are named after the Legend and Event name fields.
  */
-class IconsCard extends FormattingSettingsCard {
+class IconsCard extends CompositeCard {
     show = new formattingSettings.ToggleSwitch({ name: "show", displayNameKey: "Prop_Show", value: true });
     defaultIcon = new formattingSettings.AutoDropdown({ name: "defaultIcon", displayNameKey: "Prop_DefaultIcon", value: "none" });
+
+    allEvents = new Group({ name: "iconsAllEvents", displayNameKey: "Group_ForAllEvents", slices: [this.defaultIcon] });
+    byLegend = new Group({ name: "iconsByLegend", displayName: "", slices: [], visible: false });
+    byEvent = new Group({ name: "iconsByEvent", displayName: "", slices: [], visible: false });
 
     name: string = "icons";
     displayNameKey: string = "Card_Icons";
     topLevelSlice = this.show;
-    slices: Array<FormattingSettingsSlice> = [this.defaultIcon];
+    groups: Group[] = [this.allEvents, this.byLegend, this.byEvent];
 }
 
 class DateAxisCard extends CompositeCard {

@@ -117,5 +117,7 @@
     "Icon_cloud": "Cloud",
     "Icon_lock": "Lock",
     "Icon_shield": "Shield",
-    "Icon_chart": "Chart"
+    "Icon_chart": "Chart",
+    "Icon_auto": "Automatic",
+    "Group_ForAllEvents": "All events"
 }
