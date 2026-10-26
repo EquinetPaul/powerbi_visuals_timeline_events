@@ -76,6 +76,10 @@ const DIMMED_CLASS = "dimmed";
 // Markers closer than their size plus this gap form a cluster, which shares one tooltip.
 const CLUSTER_GAP = 3;
 const MAX_TOOLTIP_EVENTS = 10;
+// A cluster tooltip stops adding events beyond this many rows (an event and its Tooltips fields stay together).
+const MAX_TOOLTIP_ROWS = 40;
+// Non-breaking spaces, so that the Tooltips fields are indented under their event.
+const TOOLTIP_INDENT = "\u00A0\u00A0\u00A0\u00A0";
 
 interface Theme {
     isHighContrast: boolean;
@@ -1235,20 +1239,28 @@ export class Visual implements IVisual {
     }
 
     /**
-     * One row per event: its date (or its legend value when they all share the date) and its name.
+     * For each event, a row with its date (or its legend value when they all share the date) and its name,
+     * followed by its Tooltips fields, indented.
      */
     private getClusterTooltipItems(events: TimelineEvent[]): VisualTooltipDataItem[] {
         const sameDate = events.every((event) => event.date.getTime() === events[0].date.getTime());
         const count = this.getString("Tooltip_Events").replace("{0}", events.length.toString());
         const header = sameDate ? `${events[0].dateText} · ${count}` : count;
-        const items: VisualTooltipDataItem[] = events.slice(0, MAX_TOOLTIP_EVENTS).map((event) => ({
-            displayName: sameDate ? event.legend || this.data.eventColumnName : event.dateText,
-            value: event.name,
-            color: event.color,
-            header
-        }));
-        if (events.length > MAX_TOOLTIP_EVENTS) {
-            items.push({ displayName: "", value: this.getString("Tooltip_More").replace("{0}", (events.length - MAX_TOOLTIP_EVENTS).toString()), header });
+        const items: VisualTooltipDataItem[] = [];
+        let shown = 0;
+        for (const event of events) {
+            const eventItems: VisualTooltipDataItem[] = [
+                { displayName: sameDate ? event.legend || this.data.eventColumnName : event.dateText, value: event.name, color: event.color, header },
+                ...event.tooltipFields.map((field) => ({ displayName: TOOLTIP_INDENT + field.displayName, value: field.value, header }))
+            ];
+            if (shown === MAX_TOOLTIP_EVENTS || (shown > 0 && items.length + eventItems.length > MAX_TOOLTIP_ROWS)) {
+                break;
+            }
+            items.push(...eventItems);
+            shown += 1;
+        }
+        if (shown < events.length) {
+            items.push({ displayName: "", value: this.getString("Tooltip_More").replace("{0}", (events.length - shown).toString()), header });
         }
         return items;
     }

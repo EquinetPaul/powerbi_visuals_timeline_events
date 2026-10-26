@@ -17,7 +17,7 @@ Custom Power BI visual that displays events on a horizontal timeline.
 - Event labels above, below or alternating, stacked on rows with leader lines; labels that don't fit are hidden
 - Same-date events spread side by side, never on top of each other
 - Native Power BI tooltips, including report page tooltips; hovering markers that touch or overlap shows one
-  tooltip listing all their events
+  tooltip listing all their events, each followed by its Tooltips fields
 - Times of day stored alone (`1899-12-30T12:46:25`) and ISO date-times sent as text are shown in the report
   locale (`12:46:25`)
 - Selection and cross-filtering: click an event or a legend item, Ctrl+click to add, click the background to clear
