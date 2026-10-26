@@ -4,7 +4,6 @@ import powerbi from "powerbi-visuals-api";
 import { valueFormatter } from "powerbi-visuals-utils-formattingutils";
 
 import DataView = powerbi.DataView;
-import DataViewCategoryColumn = powerbi.DataViewCategoryColumn;
 import DataViewMetadataColumn = powerbi.DataViewMetadataColumn;
 import DataViewTable = powerbi.DataViewTable;
 import ISelectionId = powerbi.visuals.ISelectionId;
@@ -41,25 +40,42 @@ export interface LegendItem {
     color: string;
     shape: MarkerShape;
     icon: MarkerIcon | null;
-    /** Icon chosen for this legend value in the format pane ("none" when there is none). */
+    /** Icon chosen for this legend value in the editor ("none" when there is none). */
     iconName: string;
+    /** True when the color was chosen in the editor rather than taken from the theme. */
+    customColor: boolean;
     events: TimelineEvent[];
-    /** Selector of the legend value, used to persist its color and icon. Null when the legend data view is missing. */
-    selector: powerbi.data.Selector | null;
 }
 
-/** A distinct event name, with the icon chosen for it in the format pane. */
+/** A distinct event name, with the icon chosen for it in the editor. */
 export interface EventType {
     name: string;
     /** "auto" (Icon field, then legend), "none", or an icon name. */
     iconName: string;
-    selector: powerbi.data.Selector;
 }
+
+/**
+ * Colors and icons chosen per value in the editor, keyed by legend value or event name.
+ * They are stored as JSON in static format properties: a visual gets a single data view (one query),
+ * so per-value settings cannot be stored against a separate legend or event identity.
+ */
+export interface ValueSettings {
+    legendColors: Record<string, string>;
+    legendIcons: Record<string, string>;
+    eventIcons: Record<string, string>;
+}
+
+export const VALUE_SETTINGS_PROPERTIES: Record<keyof ValueSettings, { objectName: string; propertyName: string }> = {
+    legendColors: { objectName: "colors", propertyName: "legendColors" },
+    legendIcons: { objectName: "icons", propertyName: "legendIcons" },
+    eventIcons: { objectName: "icons", propertyName: "eventIcons" }
+};
 
 export interface TimelineData {
     events: TimelineEvent[];
-    /** Distinct event names that can get an icon in the format pane. Empty when the event data view is missing. */
+    /** Distinct event names, alphabetically, with their icon setting. */
     eventTypes: EventType[];
+    valueSettings: ValueSettings;
     legendItems: LegendItem[];
     legendTitle: string;
     /** True when the legend lists event names (no Legend field, "Shape by event name" on). */
@@ -83,29 +99,32 @@ export interface ColorOptions {
     foreground: string;
 }
 
-interface LegendValueInfo {
-    color: string | null;
-    iconName: string | null;
-    selector: powerbi.data.Selector;
-}
-
 /**
- * The table data view holds the events. A second, categorical data view holds one entry per legend
- * value: its identity lets the Colors card store a color per legend value (the documented pattern).
+ * The visual has a single table data mapping, so there is one data view.
  */
 export function getTableDataView(dataViews: DataView[] | undefined): DataView | undefined {
     return (dataViews || []).find((dataView) => !!(dataView && dataView.table)) || (dataViews && dataViews[0]);
 }
 
-/**
- * The categorical data view whose category has the given role: "legend" or "event".
- */
-function getRoleCategory(dataViews: DataView[] | undefined, role: string): DataViewCategoryColumn | null {
-    const dataView = (dataViews || []).find((view) => {
-        const categories = view && view.categorical && view.categorical.categories;
-        return !!(categories && categories[0] && categories[0].source.roles && categories[0].source.roles[role]);
-    });
-    return dataView ? dataView.categorical.categories[0] : null;
+export function readValueSettings(dataView: DataView | undefined): ValueSettings {
+    const objects = dataView && dataView.metadata && dataView.metadata.objects;
+    const read = (key: keyof ValueSettings): Record<string, string> => {
+        const { objectName, propertyName } = VALUE_SETTINGS_PROPERTIES[key];
+        const value = objects && objects[objectName] && objects[objectName][propertyName];
+        if (typeof value !== "string" || !value) {
+            return {};
+        }
+        try {
+            const parsed: unknown = JSON.parse(value);
+            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                return {};
+            }
+            return Object.fromEntries(Object.entries(parsed).filter(([, entry]) => typeof entry === "string")) as Record<string, string>;
+        } catch {
+            return {};
+        }
+    };
+    return { legendColors: read("legendColors"), legendIcons: read("legendIcons"), eventIcons: read("eventIcons") };
 }
 
 /**
@@ -178,10 +197,13 @@ export function buildTimelineData(
     }
     events.sort((a, b) => a.date.getTime() - b.date.getTime() || a.rowIndex - b.rowIndex);
 
+    const valueSettings = readValueSettings(dataView);
     const legendItems = legendColumnIndex !== -1
-        ? buildLegendItems(events, getLegendValues(getRoleCategory(dataViews, "legend"), legendFormatter, host), host, settings, colorOptions)
+        ? buildLegendItems(events, valueSettings, host, settings, colorOptions)
         : [];
-    const eventTypes = getEventTypes(getRoleCategory(dataViews, "event"), eventFormatter, host);
+    const eventTypes = Array.from(new Set(events.map((event) => event.name)))
+        .sort((a, b) => a.localeCompare(b))
+        .map((name): EventType => ({ name, iconName: valueSettings.eventIcons[name] || "auto" }));
     applyEventStyles(events, legendItems, eventTypes, host, settings, colorOptions);
 
     const legendByEventName = legendColumnIndex === -1 && settings.markers.shapeByEvent.value;
@@ -190,6 +212,7 @@ export function buildTimelineData(
         data: {
             events,
             eventTypes,
+            valueSettings,
             legendItems: legendByEventName ? buildEventNameLegendItems(events) : legendItems,
             legendTitle: legendColumnIndex !== -1 ? columns[legendColumnIndex].displayName : columns[eventColumnIndex].displayName,
             legendByEventName,
@@ -205,31 +228,11 @@ export function buildTimelineData(
 }
 
 /**
- * Colors and icons picked per legend value are stored against the legend value's identity and come back
- * in the categorical data view's category objects.
- */
-function getLegendValues(category: DataViewCategoryColumn | null, formatter: IValueFormatter, host: IVisualHost): Map<string, LegendValueInfo> {
-    const values = new Map<string, LegendValueInfo>();
-    if (!category) {
-        return values;
-    }
-    category.values.forEach((value, index) => {
-        const objects = category.objects && category.objects[index];
-        values.set(formatText(value, formatter), {
-            color: getFillColor(objects && objects["colors"] && objects["colors"]["fill"]),
-            iconName: objects && objects["icons"] && typeof objects["icons"]["icon"] === "string" ? objects["icons"]["icon"] as string : null,
-            selector: host.createSelectionIdBuilder().withCategory(category, index).createSelectionId().getSelector()
-        });
-    });
-    return values;
-}
-
-/**
  * One legend item per legend value, in alphabetical order so that theme colors are assigned in a stable order.
  */
 function buildLegendItems(
     events: TimelineEvent[],
-    legendValues: Map<string, LegendValueInfo>,
+    valueSettings: ValueSettings,
     host: IVisualHost,
     settings: VisualFormattingSettingsModel,
     colorOptions: ColorOptions
@@ -239,7 +242,7 @@ function buildLegendItems(
         const label = event.legend || "";
         let item = itemsByLabel.get(label);
         if (!item) {
-            item = { label, color: "", shape: "circle", icon: null, iconName: "none", events: [], selector: null };
+            item = { label, color: "", shape: "circle", icon: null, iconName: "none", customColor: false, events: [] };
             itemsByLabel.set(label, item);
         }
         item.events.push(event);
@@ -247,40 +250,17 @@ function buildLegendItems(
 
     const items = Array.from(itemsByLabel.values()).sort((a, b) => a.label.localeCompare(b.label));
     items.forEach((item, index) => {
-        const legendValue = legendValues.get(item.label);
+        const customColor = valueSettings.legendColors[item.label];
+        item.customColor = !!customColor;
         item.color = colorOptions.isHighContrast
             ? colorOptions.foreground
-            : (legendValue && legendValue.color) || host.colorPalette.getColor(item.label).value;
+            : customColor || host.colorPalette.getColor(item.label).value;
         // In high contrast mode every group has the same color, so groups are told apart by their shape.
         item.shape = colorOptions.isHighContrast ? MARKER_SHAPES[index % MARKER_SHAPES.length] : settings.markers.shape.value as MarkerShape;
-        item.iconName = (legendValue && legendValue.iconName) || "none";
+        item.iconName = valueSettings.legendIcons[item.label] || "none";
         item.icon = settings.icons.show.value ? resolveIcon(item.iconName) : null;
-        item.selector = legendValue ? legendValue.selector : null;
     });
     return items;
-}
-
-/**
- * Icons picked per event name are stored against the event name's identity, like the legend colors.
- */
-function getEventTypes(category: DataViewCategoryColumn | null, formatter: IValueFormatter, host: IVisualHost): EventType[] {
-    if (!category) {
-        return [];
-    }
-    return category.values.map((value, index): EventType => {
-        const objects = category.objects && category.objects[index];
-        const iconName = objects && objects["icons"] && objects["icons"]["eventIcon"];
-        return {
-            name: formatText(value, formatter),
-            iconName: typeof iconName === "string" ? iconName : "auto",
-            selector: host.createSelectionIdBuilder().withCategory(category, index).createSelectionId().getSelector()
-        };
-    });
-}
-
-function getFillColor(value: powerbi.DataViewPropertyValue): string | null {
-    const fill = value as powerbi.Fill;
-    return fill && fill.solid && fill.solid.color ? fill.solid.color : null;
 }
 
 function applyEventStyles(
@@ -302,7 +282,7 @@ function applyEventStyles(
     events.forEach((event) => {
         const legendItem = event.legend !== null ? legendByLabel.get(event.legend || "") : undefined;
         event.color = legendItem ? legendItem.color : defaultColor;
-        // An icon chosen for the event name in the format pane wins; on "auto", the Icon field value wins
+        // An icon chosen for the event name in the editor wins; on "auto", the Icon field value wins
         // over the icon of the legend value, which wins over the icon for all events.
         const eventTypeIcon = iconByEventName.get(event.name);
         event.icon = showIcons && eventTypeIcon && eventTypeIcon !== "auto"
@@ -327,7 +307,7 @@ function buildEventNameLegendItems(events: TimelineEvent[]): LegendItem[] {
     events.forEach((event) => {
         let item = items.get(event.name);
         if (!item) {
-            item = { label: event.name, color: event.color, shape: event.shape, icon: event.icon, iconName: "none", events: [], selector: null };
+            item = { label: event.name, color: event.color, shape: event.shape, icon: event.icon, iconName: "none", customColor: false, events: [] };
             items.set(event.name, item);
         }
         item.events.push(event);

@@ -4,6 +4,7 @@
 
 .timeline-visual {
     position: relative;
+    box-sizing: border-box;
     width: 100%;
     height: 100%;
     display: flex;
@@ -170,6 +171,117 @@
     svg {
         flex: 0 0 auto;
     }
+}
+
+.timeline-editor {
+    display: none;
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    box-sizing: border-box;
+    padding: 12px 12px 16px;
+    overflow-y: auto;
+    background: #FFFFFF;
+    border-left: 1px solid #EDEBE9;
+    font-size: 12px;
+    color: @text-color;
+
+    select,
+    input,
+    button {
+        font-family: inherit;
+        font-size: 12px;
+    }
+}
+
+.timeline-editor-title {
+    color: @title-color;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.timeline-editor-hint,
+.timeline-editor-note {
+    margin: 4px 0 8px;
+    line-height: 1.4;
+}
+
+.timeline-editor-section {
+    margin: 12px 0 4px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #EDEBE9;
+    color: @title-color;
+    font-weight: 600;
+}
+
+.timeline-editor-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 30px;
+
+    input[type="color"] {
+        flex: 0 0 auto;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 1px solid #C8C6C4;
+        border-radius: 2px;
+        background: none;
+        cursor: pointer;
+    }
+
+    svg {
+        flex: 0 0 auto;
+    }
+
+    select {
+        flex: 0 0 auto;
+        width: 120px;
+        height: 24px;
+        border: 1px solid #8A8886;
+        border-radius: 2px;
+        background: #FFFFFF;
+        color: @title-color;
+    }
+}
+
+.timeline-editor-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.timeline-editor-filter {
+    box-sizing: border-box;
+    width: 100%;
+    height: 26px;
+    margin: 2px 0 4px;
+    padding: 0 6px;
+    border: 1px solid #8A8886;
+    border-radius: 2px;
+}
+
+.timeline-editor-reset {
+    flex: 0 0 auto;
+    padding: 2px 4px;
+    border: none;
+    background: none;
+    color: #0F6CBD;
+    cursor: pointer;
+
+    &:disabled {
+        color: #A19F9D;
+        cursor: default;
+    }
+}
+
+.timeline-editor-footer {
+    margin-top: 12px;
+    text-align: right;
 }
 
 .timeline-message {

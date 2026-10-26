@@ -39,7 +39,8 @@ import VisualConstructorOptions = powerbi.extensibility.visual.VisualConstructor
 import VisualTooltipDataItem = powerbi.extensibility.VisualTooltipDataItem;
 import VisualUpdateOptions = powerbi.extensibility.visual.VisualUpdateOptions;
 
-import { buildTimelineData, getTableDataView, LegendItem, TimelineData, TimelineEvent } from "./dataModel";
+import { buildTimelineData, getTableDataView, LegendItem, TimelineData, TimelineEvent, VALUE_SETTINGS_PROPERTIES, ValueSettings } from "./dataModel";
+import { ValueEditor } from "./editor";
 import { createIcon } from "./icons";
 import { clamp, countRows, getAxisTicks, getLabelWidths, LabelItem, LabelLayout, layoutLabels, measureText, TextStyle } from "./layout";
 import { createShape } from "./shapes";
@@ -123,6 +124,7 @@ export class Visual implements IVisual {
     private legend: HTMLDivElement;
     private chart: HTMLDivElement;
     private message: HTMLDivElement;
+    private editor: ValueEditor;
     private selectionManager: ISelectionManager;
     private localizationManager: ILocalizationManager;
     private eventService: IVisualEventService;
@@ -163,6 +165,7 @@ export class Visual implements IVisual {
         this.message = document.createElement("div");
         this.message.className = "timeline-message";
         this.root.appendChild(this.message);
+        this.editor = new ValueEditor(this.root);
 
         this.target.appendChild(this.root);
 
@@ -186,14 +189,29 @@ export class Visual implements IVisual {
                 foreground: this.theme.foreground
             });
             this.data = result.status === "ok" ? result.data : null;
-            this.updateDataBoundSlices();
+            this.updateFormatPane();
+
+            // Advanced edit mode (Edit button of the visual header): the editor takes the right part of the visual.
+            const { width, height } = options.viewport;
+            const editing = options.editMode === powerbi.EditMode.Advanced && result.status === "ok";
+            const editorWidth = editing ? Math.round(clamp(width * 0.4, 260, 380)) : 0;
+            this.root.style.paddingRight = editing ? `${editorWidth}px` : "";
+            if (editing) {
+                this.editor.render(result.data, editorWidth, {
+                    getString: (key) => this.getString(key),
+                    iconColor: this.getIconColor(),
+                    onChange: (changes) => this.persistValueSettings(changes)
+                });
+            } else {
+                this.editor.hide();
+            }
 
             if (result.status === "landing") {
                 this.renderMessage(this.getString("Landing_Text"), this.getString("Landing_Title"));
             } else if (result.status === "message") {
                 this.renderMessage(this.getString(result.messageKey), null);
             } else {
-                this.render(result.data, options.viewport.width, options.viewport.height);
+                this.render(result.data, Math.max(width - editorWidth, 1), height);
                 if (result.data.truncated && this.host.displayWarningIcon) {
                     this.host.displayWarningIcon(this.getString("Warning_Truncated"), this.getString("Warning_TruncatedDetail"));
                 }
@@ -228,49 +246,33 @@ export class Visual implements IVisual {
     }
 
     /**
-     * Shows one color picker and one icon dropdown per legend value in the Colors and Icons cards,
-     * or the settings for all events when there is no legend.
+     * With a Legend field, colors and icons are chosen per value in the editor, so the format pane
+     * only keeps the settings that apply to all events.
      */
-    private updateDataBoundSlices(): void {
+    private updateFormatPane(): void {
         const { colors, icons } = this.formattingSettings;
-        const legendItems = this.data && this.data.legendColumnName !== null
-            ? this.data.legendItems.filter((item) => item.selector !== null)
-            : [];
         const hasLegend = !!this.data && this.data.legendColumnName !== null;
-
-        colors.defaultColor.visible = !hasLegend;
+        colors.visible = !hasLegend;
         if (!colors.defaultColor.value.value && this.data && !hasLegend && !this.theme.isHighContrast) {
             colors.defaultColor.value = { value: this.data.events[0].color };
         }
-        colors.slices = [
-            colors.defaultColor,
-            ...legendItems.map((item) => new formattingSettings.ColorPicker({
-                name: "fill",
-                displayName: item.label,
-                value: { value: item.color },
-                selector: item.selector
-            }))
-        ];
-
-        // Icons: one group for all events (no legend), one per legend value, one per event name.
         icons.allEvents.visible = !hasLegend;
-        icons.byLegend.displayName = hasLegend ? this.data.legendColumnName : "";
-        icons.byLegend.visible = legendItems.length > 0;
-        icons.byLegend.slices = legendItems.map((item) => new formattingSettings.AutoDropdown({
-            name: "icon",
-            displayName: item.label,
-            value: item.iconName,
-            selector: item.selector
-        }));
-        const eventTypes = this.data ? this.data.eventTypes : [];
-        icons.byEvent.displayName = this.data ? this.data.eventColumnName : "";
-        icons.byEvent.visible = eventTypes.length > 0;
-        icons.byEvent.slices = eventTypes.map((eventType) => new formattingSettings.AutoDropdown({
-            name: "eventIcon",
-            displayName: eventType.name,
-            value: eventType.iconName,
-            selector: eventType.selector
-        }));
+    }
+
+    /**
+     * Saves the editor's choices with the report, as JSON in static format properties.
+     */
+    private persistValueSettings(changes: Partial<ValueSettings>): void {
+        const propertiesByObject = new Map<string, Record<string, string>>();
+        (Object.keys(changes) as Array<keyof ValueSettings>).forEach((key) => {
+            const { objectName, propertyName } = VALUE_SETTINGS_PROPERTIES[key];
+            const properties = propertiesByObject.get(objectName) || {};
+            properties[propertyName] = JSON.stringify(changes[key]);
+            propertiesByObject.set(objectName, properties);
+        });
+        this.host.persistProperties({
+            merge: Array.from(propertiesByObject.entries()).map(([objectName, properties]) => ({ objectName, selector: null, properties }))
+        });
     }
 
     private renderMessage(text: string, title: string | null): void {

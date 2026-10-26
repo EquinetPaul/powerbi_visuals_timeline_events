@@ -6,11 +6,13 @@ Custom Power BI visual that displays events on a horizontal timeline.
 
 ## Features
 - Horizontal timeline with automatic date ticks (days, months, years), event dates, or start and end dates
-- Events colored by **Legend** group with the report theme colors, and a color picker per group
+- Events colored by **Legend** group with the report theme colors, or with colors picked in the editor
 - **Lanes**: one row per Legend group, with a shared date axis; lanes scroll vertically (mouse wheel, touch,
   scroll bar) when there are more groups than the "Visible lanes" setting
-- **Icons** in the markers, set per event name or per Legend group in the Icons card, for all events, or from
-  the Icon field; optional **date under the event name**
+- **Icons** in the markers, picked per event name or per Legend group in the editor, for all events in the
+  Icons card, or from the Icon field; optional **date under the event name**
+- **Editor** (Edit button of the visual header, Power BI's advanced edit mode): a color and an icon per Legend
+  value and an icon per event name, saved with the report
 - Event labels above, below or alternating, stacked on rows with leader lines; labels that don't fit are hidden
 - Same-date events spread side by side, never on top of each other
 - Native Power BI tooltips, including report page tooltips
@@ -38,10 +40,10 @@ Copyright (c) 2020 Microsoft Corporation), the icon set of Microsoft 365 and Pow
 `src/icons.ts`: Power BI visuals may not load files from the internet. Matching ignores case and accents.
 
 Which icon an event gets, from the strongest to the weakest choice:
-1. The icon chosen for its **event name** in the Icons card ("None" removes the icon, "Automatic" moves on).
+1. The icon chosen for its **event name** in the editor ("None" removes the icon, "Automatic" moves on).
 2. The value of the **Icon** field on its row.
-3. The icon chosen for its **Legend** value in the Icons card.
-4. Without a Legend field, the icon chosen for **all events**.
+3. The icon chosen for its **Legend** value in the editor.
+4. Without a Legend field, the icon chosen for **all events** in the Icons card.
 
 | Icon | French names |
 |------|--------------|
@@ -110,15 +112,19 @@ npm run lint
 dates follow the report's locale (e.g. `1 234,50 €` in French). Without it, `pbiviz` only keeps the locales
 that have a `stringResources` folder.
 
-### Data mappings
-- A **table** mapping carries the events (one row per Date / Event name / Legend / Tooltips combination,
-  up to 30,000 rows). Selection ids are built per row with `withTable`.
-- A **categorical** mapping on the Legend field carries one identity per legend value. The Colors card stores
-  each legend value's color against that identity (`withCategory`), as recommended by Microsoft.
+### Data mapping
+- A single **table** mapping carries the events (one row per Date / Event name / Legend / Icon / Tooltips
+  combination, up to 30,000 rows). Selection ids are built per row with `withTable`.
+- Power BI runs one query per visual, so a visual cannot add other data mappings (a second, categorical
+  mapping made Power BI Desktop fail with "Cannot read properties of undefined (reading 'additionalProjections')").
+  Colors and icons chosen per value in the editor are therefore saved as JSON, keyed by legend value or
+  event name, in the hidden properties `colors.legendColors`, `icons.legendIcons` and `icons.eventIcons`
+  (`host.persistProperties`).
 
 ### Microsoft recommendations
 Implemented: rendering events, allow interactions, color palette, context menu, high contrast, keyboard focus,
-landing page, localization, multi-visual selection, tooltips (default, report page and modern tooltips).
+landing page, localization, multi-visual selection, tooltips (default, report page and modern tooltips),
+advanced edit mode.
 
 Not applicable: **Highlight data** and **conditional formatting (fx)** are not supported by Power BI for
 table data mappings, so `pbiviz package` still lists "Highlight Data" as missing.

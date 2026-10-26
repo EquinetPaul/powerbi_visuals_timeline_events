@@ -119,5 +119,11 @@
     "Icon_shield": "Shield",
     "Icon_chart": "Chart",
     "Icon_auto": "Automatic",
-    "Group_ForAllEvents": "All events"
+    "Group_ForAllEvents": "All events",
+    "Editor_Title": "Colors and icons",
+    "Editor_Hint": "Pick a color and an icon per value. Your choices are saved with the report.",
+    "Editor_Filter": "Filter…",
+    "Editor_Reset": "Reset",
+    "Editor_ResetAll": "Reset all",
+    "Editor_NoLegend": "Add a Legend field to choose a color per group."
 }

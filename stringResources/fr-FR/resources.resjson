@@ -119,5 +119,11 @@
     "Icon_shield": "Bouclier",
     "Icon_chart": "Graphique",
     "Icon_auto": "Automatique",
-    "Group_ForAllEvents": "Tous les événements"
+    "Group_ForAllEvents": "Tous les événements",
+    "Editor_Title": "Couleurs et icônes",
+    "Editor_Hint": "Choisissez une couleur et une icône par valeur. Vos choix sont enregistrés avec le rapport.",
+    "Editor_Filter": "Filtrer…",
+    "Editor_Reset": "Rétablir",
+    "Editor_ResetAll": "Tout rétablir",
+    "Editor_NoLegend": "Ajoutez un champ Légende pour choisir une couleur par groupe."
 }

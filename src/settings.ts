@@ -118,7 +118,8 @@ class LanesCard extends FormattingSettingsCard {
 }
 
 /**
- * The per-legend-value color pickers are added at runtime, once the legend values are known.
+ * Colors per legend value are chosen in the visual's editor (the visual header's Edit button)
+ * and stored as JSON in a hidden property of this object.
  */
 class ColorsCard extends FormattingSettingsCard {
     defaultColor = createColorPicker("defaultColor", "Prop_DefaultColor", "");
@@ -139,21 +140,19 @@ class MarkersCard extends FormattingSettingsCard {
 }
 
 /**
- * Icons drawn inside the markers. The dropdowns per legend value and per event name are added at runtime,
- * once the values are known; their groups are named after the Legend and Event name fields.
+ * Icons drawn inside the markers. Icons per legend value and per event name are chosen in the visual's
+ * editor (the visual header's Edit button) and stored as JSON in hidden properties of this object.
  */
 class IconsCard extends CompositeCard {
     show = new formattingSettings.ToggleSwitch({ name: "show", displayNameKey: "Prop_Show", value: true });
     defaultIcon = new formattingSettings.AutoDropdown({ name: "defaultIcon", displayNameKey: "Prop_DefaultIcon", value: "none" });
 
     allEvents = new Group({ name: "iconsAllEvents", displayNameKey: "Group_ForAllEvents", slices: [this.defaultIcon] });
-    byLegend = new Group({ name: "iconsByLegend", displayName: "", slices: [], visible: false });
-    byEvent = new Group({ name: "iconsByEvent", displayName: "", slices: [], visible: false });
 
     name: string = "icons";
     displayNameKey: string = "Card_Icons";
     topLevelSlice = this.show;
-    groups: Group[] = [this.allEvents, this.byLegend, this.byEvent];
+    groups: Group[] = [this.allEvents];
 }
 
 class DateAxisCard extends CompositeCard {
