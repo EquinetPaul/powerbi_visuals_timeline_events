@@ -126,5 +126,7 @@
     "Editor_Reset": "Reset",
     "Editor_ResetAll": "Reset all",
     "Editor_NoLegend": "Add a Legend field to choose a color per group.",
-    "Role_Lane": "Lane"
+    "Role_Lane": "Lane",
+    "Tooltip_Events": "{0} events",
+    "Tooltip_More": "+{0} more"
 }

@@ -126,5 +126,7 @@
     "Editor_Reset": "Rétablir",
     "Editor_ResetAll": "Tout rétablir",
     "Editor_NoLegend": "Ajoutez un champ Légende pour choisir une couleur par groupe.",
-    "Role_Lane": "Couloir"
+    "Role_Lane": "Couloir",
+    "Tooltip_Events": "{0} événements",
+    "Tooltip_More": "+{0} autres"
 }

@@ -175,10 +175,10 @@ export function buildTimelineData(
     const dateColumn = columns[dateColumnIndex];
     const dateFormatter = dateColumn.format ? createFormatter(dateColumn.format, locale) : null;
     const formatDate = (date: Date): string => (dateFormatter ? dateFormatter.format(date) : date.toLocaleDateString(locale));
-    const eventFormatter = createFormatter(columns[eventColumnIndex].format, locale);
-    const legendFormatter = legendColumnIndex !== -1 ? createFormatter(columns[legendColumnIndex].format, locale) : null;
-    const laneFormatter = laneColumnIndex !== -1 ? createFormatter(columns[laneColumnIndex].format, locale) : null;
-    const tooltipFormatters = tooltipColumnIndexes.map((index) => createFormatter(columns[index].format, locale));
+    const eventFormatter = createColumnFormatter(columns[eventColumnIndex].format, locale);
+    const legendFormatter = legendColumnIndex !== -1 ? createColumnFormatter(columns[legendColumnIndex].format, locale) : null;
+    const laneFormatter = laneColumnIndex !== -1 ? createColumnFormatter(columns[laneColumnIndex].format, locale) : null;
+    const tooltipFormatters = tooltipColumnIndexes.map((index) => createColumnFormatter(columns[index].format, locale));
 
     const rows = table.rows || [];
     const events: TimelineEvent[] = [];
@@ -201,7 +201,7 @@ export function buildTimelineData(
             tooltipFields: tooltipColumnIndexes
                 .map((index, position) => ({ column: columns[index], value: row[index], formatter: tooltipFormatters[position] }))
                 .filter(({ value }) => value !== null && value !== undefined && value !== "")
-                .map(({ column, value, formatter }) => ({ displayName: column.displayName, value: formatter.format(value) })),
+                .map(({ column, value, formatter }) => ({ displayName: column.displayName, value: formatter(value) })),
             selectionId: createRowSelectionId(host, table, rowIndex)
         });
     });
@@ -353,11 +353,48 @@ function createFormatter(format: string | undefined, locale: string): IValueForm
     return valueFormatter.create({ format, cultureSelector: locale });
 }
 
-function formatText(value: powerbi.PrimitiveValue, formatter: IValueFormatter): string {
+type ColumnFormatter = (value: powerbi.PrimitiveValue) => string;
+
+// Power BI and Excel store a time of day alone on 30 December 1899, and such values often reach the visual
+// as text ("1899-12-30T12:46:25").
+const ISO_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?Z?$/;
+
+/**
+ * Formats the values of a column with its format string. Dates without a format string, and date-times
+ * received as ISO text, are shown in the report locale; times alone are shown without their 1899 date.
+ */
+function createColumnFormatter(format: string | undefined, locale: string): ColumnFormatter {
+    const formatter = createFormatter(format, locale);
+    return (value) => {
+        const match = typeof value === "string" ? ISO_DATE_TIME.exec(value.trim()) : null;
+        const date = match
+            ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6] || 0))
+            : value;
+        if (date instanceof Date && (match || !format)) {
+            return formatDateValue(date, locale);
+        }
+        return formatter.format(value);
+    };
+}
+
+function formatDateValue(date: Date, locale: string): string {
+    const isTimeOnly = date.getFullYear() === 1899 && date.getMonth() === 11 && date.getDate() === 30;
+    const hasTime = date.getHours() !== 0 || date.getMinutes() !== 0 || date.getSeconds() !== 0;
+    try {
+        if (isTimeOnly) {
+            return date.toLocaleTimeString(locale);
+        }
+        return hasTime ? date.toLocaleString(locale) : date.toLocaleDateString(locale);
+    } catch {
+        return date.toLocaleString();
+    }
+}
+
+function formatText(value: powerbi.PrimitiveValue, formatter: ColumnFormatter): string {
     if (value === null || value === undefined || value === "") {
         return "(Blank)";
     }
-    return formatter.format(value);
+    return formatter(value);
 }
 
 /**

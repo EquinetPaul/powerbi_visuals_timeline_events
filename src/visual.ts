@@ -73,6 +73,9 @@ const SCROLLBAR_WIDTH = 8;
 const GRID_COLOR = "#EDEBE9";
 const ALTERNATE_LANE_COLOR = "#FAF9F8";
 const DIMMED_CLASS = "dimmed";
+// Markers closer than their size plus this gap form a cluster, which shares one tooltip.
+const CLUSTER_GAP = 3;
+const MAX_TOOLTIP_EVENTS = 10;
 
 interface Theme {
     isHighContrast: boolean;
@@ -140,6 +143,9 @@ export class Visual implements IVisual {
     private laneIndexes: number[][] = [];
     private laneOf: number[] = [];
     private lanesScrollTop = 0;
+    /** Groups of markers that touch or overlap, as event indexes, and the cluster of each event. */
+    private clusters: number[][] = [];
+    private clusterOf: number[] = [];
 
     constructor(options: VisualConstructorOptions) {
         this.host = options.host;
@@ -335,6 +341,8 @@ export class Visual implements IVisual {
 
         this.chart.replaceChildren();
         this.chart.setAttribute("aria-label", this.getString("Aria_Timeline"));
+        this.clusters = [];
+        this.clusterOf = new Array(data.events.length);
         if (lanes) {
             this.renderLanes(data, lanes, chartWidth, chartHeight);
         } else {
@@ -708,7 +716,32 @@ export class Visual implements IVisual {
             drawEventLabel(layout, top, lineY + radius, top);
         });
 
+        this.drawClusters(svg, indexes, xs, lineY, markerSize);
         this.drawMarkers(svg, data, indexes, xs, lineY);
+    }
+
+    /**
+     * Records the clusters of the band and draws, under the markers, a transparent area over each cluster
+     * so that its tooltip stays while the pointer moves between its markers.
+     */
+    private drawClusters(svg: SVGSVGElement, indexes: number[], xs: number[], lineY: number, markerSize: number): void {
+        const group = this.appendGroup(svg, "timeline-clusters");
+        let start = 0;
+        for (let position = 1; position <= indexes.length; position++) {
+            if (position < indexes.length && xs[position] - xs[position - 1] <= markerSize + CLUSTER_GAP) {
+                continue;
+            }
+            const clusterIndex = this.clusters.length;
+            const cluster = indexes.slice(start, position);
+            this.clusters.push(cluster);
+            cluster.forEach((index) => { this.clusterOf[index] = clusterIndex; });
+            if (cluster.length > 1) {
+                const area = appendRect(group, xs[start] - markerSize / 2, lineY - markerSize / 2, xs[position - 1] - xs[start] + markerSize, markerSize, "transparent");
+                area.setAttribute("class", "timeline-cluster");
+                area.setAttribute("data-cluster", clusterIndex.toString());
+            }
+            start = position;
+        }
     }
 
     /**
@@ -965,6 +998,10 @@ export class Visual implements IVisual {
             if (!this.data || !this.allowInteractions()) {
                 return;
             }
+            if (event.target instanceof Element && event.target.closest(".timeline-cluster")) {
+                // Between two markers of a cluster: neither a marker nor the background.
+                return;
+            }
             const index = this.getEventIndex(event.target);
             if (index === null) {
                 this.selectionManager.clear().then(() => this.syncSelection([]));
@@ -985,12 +1022,19 @@ export class Visual implements IVisual {
         });
 
         this.chart.addEventListener("pointermove", (event: PointerEvent) => {
-            const index = this.getEventIndex(event.target);
-            if (index === null) {
-                this.hideTooltip(event.pointerType === "touch");
+            const isTouchEvent = event.pointerType === "touch";
+            const point: [number, number] = [event.clientX, event.clientY];
+            const cluster = this.getHoveredCluster(event.target);
+            if (cluster && cluster.length > 1) {
+                this.showTooltip(cluster, point, isTouchEvent);
                 return;
             }
-            this.showTooltip(index, [event.clientX, event.clientY], event.pointerType === "touch");
+            const index = this.getEventIndex(event.target);
+            if (index === null) {
+                this.hideTooltip(isTouchEvent);
+                return;
+            }
+            this.showTooltip([index], point, isTouchEvent);
         });
         this.chart.addEventListener("pointerleave", (event: PointerEvent) => this.hideTooltip(event.pointerType === "touch"));
 
@@ -1000,10 +1044,27 @@ export class Visual implements IVisual {
             const index = this.getEventIndex(event.target);
             if (index !== null) {
                 const rect = (event.target as Element).getBoundingClientRect();
-                this.showTooltip(index, [rect.left + rect.width / 2, rect.top + rect.height / 2], false);
+                this.showTooltip([index], [rect.left + rect.width / 2, rect.top + rect.height / 2], false);
             }
         });
         this.chart.addEventListener("focusout", () => this.hideTooltip(false));
+    }
+
+    /**
+     * The cluster under the pointer: the cluster of a hovered marker, or of the area between its markers.
+     * Labels are precise, so hovering a label gives no cluster.
+     */
+    private getHoveredCluster(target: EventTarget | null): number[] | null {
+        if (!(target instanceof Element) || !this.data) {
+            return null;
+        }
+        const area = target.closest(".timeline-cluster");
+        if (area) {
+            return this.clusters[Number(area.getAttribute("data-cluster"))] || null;
+        }
+        const marker = target.closest(".timeline-marker");
+        const clusterIndex = marker ? this.clusterOf[Number(marker.getAttribute("data-index"))] : undefined;
+        return clusterIndex !== undefined ? this.clusters[clusterIndex] : null;
     }
 
     /**
@@ -1155,19 +1216,41 @@ export class Visual implements IVisual {
         }));
     }
 
-    private showTooltip(index: number, clientPoint: [number, number], isTouchEvent: boolean): void {
+    /**
+     * Shows the tooltip of one event, or the list of the events of a cluster.
+     */
+    private showTooltip(indexes: number[], clientPoint: [number, number], isTouchEvent: boolean): void {
         const tooltipService = this.host.tooltipService;
         if (!this.data || !tooltipService || !tooltipService.enabled()) {
             return;
         }
-        const event = this.data.events[index];
+        const events = indexes.map((index) => this.data.events[index]);
         const rect = this.target.getBoundingClientRect();
         tooltipService.show({
             coordinates: [clientPoint[0] - rect.left, clientPoint[1] - rect.top],
             isTouchEvent,
-            dataItems: this.getTooltipItems(event),
-            identities: [event.selectionId]
+            dataItems: events.length === 1 ? this.getTooltipItems(events[0]) : this.getClusterTooltipItems(events),
+            identities: events.map((event) => event.selectionId)
         });
+    }
+
+    /**
+     * One row per event: its date (or its legend value when they all share the date) and its name.
+     */
+    private getClusterTooltipItems(events: TimelineEvent[]): VisualTooltipDataItem[] {
+        const sameDate = events.every((event) => event.date.getTime() === events[0].date.getTime());
+        const count = this.getString("Tooltip_Events").replace("{0}", events.length.toString());
+        const header = sameDate ? `${events[0].dateText} · ${count}` : count;
+        const items: VisualTooltipDataItem[] = events.slice(0, MAX_TOOLTIP_EVENTS).map((event) => ({
+            displayName: sameDate ? event.legend || this.data.eventColumnName : event.dateText,
+            value: event.name,
+            color: event.color,
+            header
+        }));
+        if (events.length > MAX_TOOLTIP_EVENTS) {
+            items.push({ displayName: "", value: this.getString("Tooltip_More").replace("{0}", (events.length - MAX_TOOLTIP_EVENTS).toString()), header });
+        }
+        return items;
     }
 
     private hideTooltip(isTouchEvent: boolean): void {
