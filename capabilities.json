@@ -19,6 +19,12 @@
             "kind": "Grouping"
         },
         {
+            "displayName": "Lane",
+            "displayNameKey": "Role_Lane",
+            "name": "lane",
+            "kind": "Grouping"
+        },
+        {
             "displayName": "Icon",
             "displayNameKey": "Role_Icon",
             "name": "icon",
@@ -760,6 +766,9 @@
                     },
                     "icon": {
                         "max": 1
+                    },
+                    "lane": {
+                        "max": 1
                     }
                 }
             ],
@@ -779,6 +788,11 @@
                         {
                             "for": {
                                 "in": "legend"
+                            }
+                        },
+                        {
+                            "for": {
+                                "in": "lane"
                             }
                         },
                         {

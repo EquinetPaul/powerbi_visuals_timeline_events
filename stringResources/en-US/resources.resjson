@@ -56,7 +56,7 @@
     "Enum_Dashed": "Dashed",
     "Enum_Dotted": "Dotted",
     "Landing_Title": "Timeline Events",
-    "Landing_Text": "Add a Date and an Event name to draw the timeline. Add a Legend to color events by group, and Tooltips for more details.",
+    "Landing_Text": "Add a Date and an Event name to draw the timeline. Add a Legend to color the events, a Lane to group them on separate rows, and Tooltips for more details.",
     "Message_MissingFields": "Add at least a Date and an Event name.",
     "Message_DateHierarchy": "The Date field must contain dates. If it uses a date hierarchy, click the arrow next to the Date field and select the column name instead of \"Date Hierarchy\".",
     "Message_NoValidDates": "The Date field contains no valid dates.",
@@ -125,5 +125,6 @@
     "Editor_Filter": "Filter…",
     "Editor_Reset": "Reset",
     "Editor_ResetAll": "Reset all",
-    "Editor_NoLegend": "Add a Legend field to choose a color per group."
+    "Editor_NoLegend": "Add a Legend field to choose a color per group.",
+    "Role_Lane": "Lane"
 }

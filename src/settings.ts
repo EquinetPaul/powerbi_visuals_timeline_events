@@ -103,10 +103,11 @@ class LegendCard extends CompositeCard {
 }
 
 /**
- * One lane per legend value. Lanes scroll vertically when there are more than `visibleLanes`.
+ * One lane per value of the Lane field. Lanes scroll vertically when there are more than `visibleLanes`.
+ * The card is only shown when the Lane field is set.
  */
 class LanesCard extends FormattingSettingsCard {
-    show = new formattingSettings.ToggleSwitch({ name: "show", displayNameKey: "Prop_Show", value: false });
+    show = new formattingSettings.ToggleSwitch({ name: "show", displayNameKey: "Prop_Show", value: true });
     visibleLanes = createNumUpDown("visibleLanes", "Prop_VisibleLanes", 4, 1, 20);
     order = new formattingSettings.AutoDropdown({ name: "order", displayNameKey: "Prop_LaneOrder", value: "alphabetical" });
     alternateBackground = new formattingSettings.ToggleSwitch({ name: "alternateBackground", displayNameKey: "Prop_AlternateBackground", value: true });

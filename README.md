@@ -7,8 +7,9 @@ Custom Power BI visual that displays events on a horizontal timeline.
 ## Features
 - Horizontal timeline with automatic date ticks (days, months, years), event dates, or start and end dates
 - Events colored by **Legend** group with the report theme colors, or with colors picked in the editor
-- **Lanes**: one row per Legend group, with a shared date axis; lanes scroll vertically (mouse wheel, touch,
-  scroll bar) when there are more groups than the "Visible lanes" setting
+- **Lanes**: one row per value of the **Lane** field (for example a team or a project), with a shared date
+  axis; the Legend still colors the events inside each lane; lanes scroll vertically (mouse wheel, touch,
+  scroll bar) when there are more of them than the "Visible lanes" setting
 - **Icons** in the markers, picked per event name or per Legend group in the editor, for all events in the
   Icons card, or from the Icon field; optional **date under the event name**
 - **Editor** (Edit button of the visual header, Power BI's advanced edit mode): a color and an icon per Legend
@@ -27,6 +28,7 @@ Custom Power BI visual that displays events on a horizontal timeline.
 - Date (one field: a date column, or text dates such as `2026-01-05`)
 - Event name (one field)
 - Legend (optional, one field): groups and colors the events
+- Lane (optional, one field): puts the events of each value on their own row
 - Icon (optional, one field): icon of each event, as an icon name (English or French, see below),
   or one or two characters such as an emoji
 - Tooltips (one or more fields, formatted with the model's format strings)
@@ -113,8 +115,8 @@ dates follow the report's locale (e.g. `1 234,50 €` in French). Without it, `p
 that have a `stringResources` folder.
 
 ### Data mapping
-- A single **table** mapping carries the events (one row per Date / Event name / Legend / Icon / Tooltips
-  combination, up to 30,000 rows). Selection ids are built per row with `withTable`.
+- A single **table** mapping carries the events (one row per Date / Event name / Legend / Lane / Icon /
+  Tooltips combination, up to 30,000 rows). Selection ids are built per row with `withTable`.
 - Power BI runs one query per visual, so a visual cannot add other data mappings (a second, categorical
   mapping made Power BI Desktop fail with "Cannot read properties of undefined (reading 'additionalProjections')").
   Colors and icons chosen per value in the editor are therefore saved as JSON, keyed by legend value or

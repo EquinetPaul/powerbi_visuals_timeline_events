@@ -56,7 +56,7 @@
     "Enum_Dashed": "Tirets",
     "Enum_Dotted": "Pointillés",
     "Landing_Title": "Timeline Events",
-    "Landing_Text": "Ajoutez une Date et un Nom d'événement pour afficher la frise. Ajoutez une Légende pour colorer les événements par groupe, et des Info-bulles pour plus de détails.",
+    "Landing_Text": "Ajoutez une Date et un Nom d'événement pour afficher la frise. Ajoutez une Légende pour colorer les événements, un Couloir pour les regrouper sur plusieurs lignes, et des Info-bulles pour plus de détails.",
     "Message_MissingFields": "Ajoutez au minimum une Date et un Nom d'événement.",
     "Message_DateHierarchy": "Le champ Date doit contenir des dates. S'il utilise une hiérarchie de dates, cliquez sur la flèche du champ Date et choisissez le nom de la colonne au lieu de « Hiérarchie de dates ».",
     "Message_NoValidDates": "Le champ Date ne contient aucune date valide.",
@@ -125,5 +125,6 @@
     "Editor_Filter": "Filtrer…",
     "Editor_Reset": "Rétablir",
     "Editor_ResetAll": "Tout rétablir",
-    "Editor_NoLegend": "Ajoutez un champ Légende pour choisir une couleur par groupe."
+    "Editor_NoLegend": "Ajoutez un champ Légende pour choisir une couleur par groupe.",
+    "Role_Lane": "Couloir"
 }

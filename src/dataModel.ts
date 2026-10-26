@@ -28,6 +28,8 @@ export interface TimelineEvent {
     dateText: string;
     name: string;
     legend: string | null;
+    /** Value of the Lane field, or null without one. */
+    lane: string | null;
     color: string;
     shape: MarkerShape;
     icon: MarkerIcon | null;
@@ -44,6 +46,12 @@ export interface LegendItem {
     iconName: string;
     /** True when the color was chosen in the editor rather than taken from the theme. */
     customColor: boolean;
+    events: TimelineEvent[];
+}
+
+/** A value of the Lane field and its events, in date order. */
+export interface LaneItem {
+    label: string;
     events: TimelineEvent[];
 }
 
@@ -83,6 +91,9 @@ export interface TimelineData {
     dateColumnName: string;
     eventColumnName: string;
     legendColumnName: string | null;
+    laneColumnName: string | null;
+    /** One item per Lane field value, alphabetically. Empty without a Lane field. */
+    laneItems: LaneItem[];
     minDate: Date;
     maxDate: Date;
     truncated: boolean;
@@ -146,6 +157,7 @@ export function buildTimelineData(
     const dateColumnIndex = findDateColumnIndex(columns);
     const eventColumnIndex = columns.findIndex((column) => column.roles && column.roles.event);
     const legendColumnIndex = columns.findIndex((column) => column.roles && column.roles.legend);
+    const laneColumnIndex = columns.findIndex((column) => column.roles && column.roles.lane);
     const iconColumnIndex = columns.findIndex((column) => column.roles && column.roles.icon);
     const showIcons = settings.icons.show.value;
     const tooltipColumnIndexes = columns
@@ -165,6 +177,7 @@ export function buildTimelineData(
     const formatDate = (date: Date): string => (dateFormatter ? dateFormatter.format(date) : date.toLocaleDateString(locale));
     const eventFormatter = createFormatter(columns[eventColumnIndex].format, locale);
     const legendFormatter = legendColumnIndex !== -1 ? createFormatter(columns[legendColumnIndex].format, locale) : null;
+    const laneFormatter = laneColumnIndex !== -1 ? createFormatter(columns[laneColumnIndex].format, locale) : null;
     const tooltipFormatters = tooltipColumnIndexes.map((index) => createFormatter(columns[index].format, locale));
 
     const rows = table.rows || [];
@@ -181,6 +194,7 @@ export function buildTimelineData(
             dateText: formatDate(date),
             name: formatText(row[eventColumnIndex], eventFormatter),
             legend: legendFormatter ? formatText(legendValue, legendFormatter) : null,
+            lane: laneFormatter ? formatText(row[laneColumnIndex], laneFormatter) : null,
             color: "",
             shape: "circle",
             icon: showIcons && iconColumnIndex !== -1 ? resolveIcon(row[iconColumnIndex]) : null,
@@ -219,12 +233,26 @@ export function buildTimelineData(
             dateColumnName: dateColumn.displayName,
             eventColumnName: columns[eventColumnIndex].displayName,
             legendColumnName: legendColumnIndex !== -1 ? columns[legendColumnIndex].displayName : null,
+            laneColumnName: laneColumnIndex !== -1 ? columns[laneColumnIndex].displayName : null,
+            laneItems: laneColumnIndex !== -1 ? buildLaneItems(events) : [],
             minDate: events[0].date,
             maxDate: events[events.length - 1].date,
             truncated: rows.length >= MAX_ROWS,
             formatDate
         }
     };
+}
+
+function buildLaneItems(events: TimelineEvent[]): LaneItem[] {
+    const lanes = new Map<string, LaneItem>();
+    events.forEach((event) => {
+        const label = event.lane || "";
+        if (!lanes.has(label)) {
+            lanes.set(label, { label, events: [] });
+        }
+        lanes.get(label).events.push(event);
+    });
+    return Array.from(lanes.values()).sort((a, b) => a.label.localeCompare(b.label));
 }
 
 /**

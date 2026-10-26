@@ -92,8 +92,10 @@ interface AxisLabel {
 }
 
 interface Lane {
-    item: LegendItem;
-    legendIndex: number;
+    label: string;
+    events: TimelineEvent[];
+    /** Position of the lane in TimelineData.laneItems. */
+    laneItemIndex: number;
     /** Indexes of the lane's events in TimelineData.events, in date order. */
     indexes: number[];
 }
@@ -257,6 +259,7 @@ export class Visual implements IVisual {
             colors.defaultColor.value = { value: this.data.events[0].color };
         }
         icons.allEvents.visible = !hasLegend;
+        this.formattingSettings.lanes.visible = !!this.data && this.data.laneColumnName !== null;
     }
 
     /**
@@ -325,7 +328,7 @@ export class Visual implements IVisual {
         this.focusedIndex = Math.min(this.focusedIndex, data.events.length - 1);
 
         const lanes = this.getLanes(data);
-        const legendSize = this.renderLegend(data, width, height, lanes !== null);
+        const legendSize = this.renderLegend(data, width, height);
         const isVerticalLegend = this.root.classList.contains("legend-left") || this.root.classList.contains("legend-right");
         const chartWidth = Math.max(isVerticalLegend ? width - legendSize : width, 1);
         const chartHeight = Math.max(isVerticalLegend ? height : height - legendSize, 1);
@@ -342,16 +345,17 @@ export class Visual implements IVisual {
     }
 
     /**
-     * One lane per legend value when the Lanes card is on and a Legend field is set, otherwise null.
+     * One lane per value of the Lane field when it is set and the Lanes card is on, otherwise null.
      */
     private getLanes(data: TimelineData): Lane[] | null {
-        if (!this.formattingSettings.lanes.show.value || data.legendColumnName === null || data.legendItems.length === 0) {
+        if (!this.formattingSettings.lanes.show.value || data.laneColumnName === null || data.laneItems.length === 0) {
             return null;
         }
         const indexOf = new Map(data.events.map((event, index): [TimelineEvent, number] => [event, index]));
-        const lanes = data.legendItems.map((item, legendIndex): Lane => ({
-            item,
-            legendIndex,
+        const lanes = data.laneItems.map((item, laneItemIndex): Lane => ({
+            label: item.label,
+            events: item.events,
+            laneItemIndex,
             indexes: item.events.map((event) => indexOf.get(event))
         }));
         if (this.formattingSettings.lanes.order.value as LaneOrder === "firstDate") {
@@ -362,9 +366,8 @@ export class Visual implements IVisual {
 
     /**
      * Renders the legend and returns the space it takes (height, or width for a left/right legend).
-     * Lanes show their own names, so the legend is hidden when lanes are on.
      */
-    private renderLegend(data: TimelineData, width: number, height: number, hidden: boolean): number {
+    private renderLegend(data: TimelineData, width: number, height: number): number {
         const settings = this.formattingSettings.legend;
         const position = settings.position.value as LegendPosition;
         const isVertical = position.indexOf("Left") === 0 || position.indexOf("Right") === 0;
@@ -373,7 +376,7 @@ export class Visual implements IVisual {
         this.legend.classList.toggle("centered", position.indexOf("Center") !== -1);
         this.legend.replaceChildren();
 
-        if (hidden || !settings.show.value || data.legendItems.length === 0) {
+        if (!settings.show.value || data.legendItems.length === 0) {
             this.legend.style.display = "none";
             return 0;
         }
@@ -404,7 +407,7 @@ export class Visual implements IVisual {
     }
 
     /**
-     * A legend marker and name, used by the legend and by the lane names. Clicking it selects the group's events.
+     * A legend marker and name. Clicking it selects the group's events.
      */
     private createLegendEntry(className: string, item: LegendItem, legendIndex: number, style: TextStyle, interactive: boolean): HTMLDivElement {
         const element = document.createElement("div");
@@ -433,18 +436,43 @@ export class Visual implements IVisual {
         if (interactive && this.allowInteractions()) {
             element.tabIndex = 0;
             element.setAttribute("role", "button");
-            element.addEventListener("click", (event) => {
-                event.stopPropagation();
-                this.selectLegendItem(item, event);
-            });
-            element.addEventListener("keydown", (event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    this.selectLegendItem(item, event);
-                }
-            });
+            this.bindGroupSelection(element, item.events);
         }
         return element;
+    }
+
+    /**
+     * The name of a lane, on its left. Clicking it selects the lane's events.
+     */
+    private createLaneName(lane: Lane, style: TextStyle, width: number): HTMLDivElement {
+        const element = document.createElement("div");
+        element.className = "timeline-lane-name";
+        element.setAttribute("data-lane-index", lane.laneItemIndex.toString());
+        element.title = lane.label;
+        element.style.width = `${width}px`;
+        applyHtmlTextStyle(element, style);
+        const label = document.createElement("span");
+        label.textContent = lane.label;
+        element.appendChild(label);
+        if (this.allowInteractions()) {
+            element.tabIndex = 0;
+            element.setAttribute("role", "button");
+            this.bindGroupSelection(element, lane.events);
+        }
+        return element;
+    }
+
+    private bindGroupSelection(element: HTMLElement, events: TimelineEvent[]): void {
+        element.addEventListener("click", (event) => {
+            event.stopPropagation();
+            this.selectGroup(events, event);
+        });
+        element.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                this.selectGroup(events, event);
+            }
+        });
     }
 
     private renderSingle(data: TimelineData, width: number, height: number): void {
@@ -487,8 +515,8 @@ export class Visual implements IVisual {
         const axisLineHeight = axisStyle.fontSize * 1.25;
         const visibleLanes = Math.max(1, Math.round(settings.lanes.visibleLanes.value));
 
-        const longestName = Math.max(...lanes.map((lane) => measureText(lane.item.label, { ...nameStyle, bold: true })));
-        const nameWidth = Math.round(clamp(longestName + nameStyle.fontSize * 1.2 + 26, 60, width * 0.3));
+        const longestName = Math.max(...lanes.map((lane) => measureText(lane.label, { ...nameStyle, bold: true })));
+        const nameWidth = Math.round(clamp(longestName + 26, 60, width * 0.3));
         const scrolls = lanes.length > visibleLanes;
         const bandWidth = Math.max(width - nameWidth - (scrolls ? SCROLLBAR_WIDTH : 0), 1);
         const { x0, x1, xOf } = this.getScale(data, bandWidth);
@@ -520,12 +548,8 @@ export class Visual implements IVisual {
             row.className = isAlternate ? "timeline-lane alternate" : "timeline-lane";
             row.style.height = `${laneHeight}px`;
             row.setAttribute("role", "group");
-            row.setAttribute("aria-label", lane.item.label);
-
-            const name = this.createLegendEntry("timeline-lane-name", lane.item, lane.legendIndex, nameStyle, true);
-            name.style.width = `${nameWidth}px`;
-            applyHtmlTextStyle(name, nameStyle);
-            row.appendChild(name);
+            row.setAttribute("aria-label", lane.label);
+            row.appendChild(this.createLaneName(lane, nameStyle, nameWidth));
             container.appendChild(row);
 
             const svg = this.appendSvg(row, bandWidth, laneHeight - 1);
@@ -1071,10 +1095,10 @@ export class Visual implements IVisual {
     }
 
     /**
-     * Clicking a legend item selects all its events; clicking it again clears the selection.
+     * Clicking a legend item or a lane name selects all its events; clicking it again clears the selection.
      */
-    private selectLegendItem(item: LegendItem, event: MouseEvent | KeyboardEvent): void {
-        const ids = item.events.map((timelineEvent) => timelineEvent.selectionId);
+    private selectGroup(events: TimelineEvent[], event: MouseEvent | KeyboardEvent): void {
+        const ids = events.map((timelineEvent) => timelineEvent.selectionId);
         const alreadySelected = this.selectedKeys.size === ids.length && ids.every((id) => this.selectedKeys.has(id.getKey()));
         if (alreadySelected && !isMultiSelect(event)) {
             this.selectionManager.clear().then(() => this.syncSelection([]));
@@ -1116,14 +1140,19 @@ export class Visual implements IVisual {
             element.classList.toggle(DIMMED_CLASS, !selected);
         });
 
-        this.root.querySelectorAll(".timeline-legend-item, .timeline-lane-name").forEach((element) => {
-            const item = this.data.legendItems[Number(element.getAttribute("data-legend-index"))];
-            const selected = !hasSelection || item.events.some((event) => this.selectedKeys.has(event.selectionId.getKey()));
+        const groups: Array<[string, Array<{ events: TimelineEvent[] }>]> = [
+            [".timeline-legend-item", this.data.legendItems],
+            [".timeline-lane-name", this.data.laneItems]
+        ];
+        groups.forEach(([selector, items]) => this.root.querySelectorAll(selector).forEach((element) => {
+            const index = Number(element.getAttribute(selector === ".timeline-lane-name" ? "data-lane-index" : "data-legend-index"));
+            const item = items[index];
+            const selected = !hasSelection || (!!item && item.events.some((event) => this.selectedKeys.has(event.selectionId.getKey())));
             element.classList.toggle(DIMMED_CLASS, !selected);
             if (element.getAttribute("role") === "button") {
                 element.setAttribute("aria-pressed", String(hasSelection && selected));
             }
-        });
+        }));
     }
 
     private showTooltip(index: number, clientPoint: [number, number], isTouchEvent: boolean): void {
@@ -1155,6 +1184,9 @@ export class Visual implements IVisual {
         ];
         if (data.legendColumnName !== null && event.legend !== null) {
             items.push({ displayName: data.legendColumnName, value: event.legend });
+        }
+        if (data.laneColumnName !== null && event.lane !== null) {
+            items.push({ displayName: data.laneColumnName, value: event.lane });
         }
         event.tooltipFields.forEach((field) => items.push({ displayName: field.displayName, value: field.value }));
         return items;
