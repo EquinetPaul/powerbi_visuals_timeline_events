@@ -41,6 +41,67 @@
     overflow: hidden;
 }
 
+.timeline-plot {
+    position: relative;
+
+    // Horizontal drags scroll the zoomed timeline; vertical ones still scroll the lanes and the page.
+    &.zoomable {
+        touch-action: pan-y;
+    }
+}
+
+.timeline-chart.panning,
+.timeline-chart.panning * {
+    cursor: grabbing;
+}
+
+.timeline-hint {
+    cursor: pointer;
+}
+
+.timeline-zoom {
+    touch-action: none;
+    user-select: none;
+
+    svg {
+        display: block;
+    }
+
+    &.dragging .timeline-zoom-window {
+        cursor: grabbing;
+    }
+}
+
+.timeline-zoom-window {
+    cursor: grab;
+    outline: none;
+
+    &:focus-visible {
+        stroke: var(--timeline-focus-color, @title-color);
+        stroke-width: 2px;
+    }
+}
+
+.timeline-zoom-handle {
+    cursor: ew-resize;
+    outline: none;
+
+    &:focus-visible .timeline-zoom-grip {
+        stroke: var(--timeline-focus-color, @title-color);
+        stroke-width: 2px;
+    }
+}
+
+.timeline-zoom-reset {
+    cursor: pointer;
+    outline: none;
+
+    &:focus-visible rect {
+        stroke: var(--timeline-focus-color, @title-color);
+        stroke-width: 2px;
+    }
+}
+
 .timeline-marker {
     cursor: pointer;
     outline: none;

@@ -48,6 +48,7 @@ export type LabelPosition = "above" | "below" | "alternate";
 export type DateLabelMode = "auto" | "eventDates" | "startEnd";
 export type LineStyle = "solid" | "dashed" | "dotted";
 export type LaneOrder = "alphabetical" | "firstDate";
+export type WheelZoom = "ctrl" | "wheel";
 
 function createFontControl(defaultFontSize: number): formattingSettings.FontControl {
     return new formattingSettings.FontControl({
@@ -203,6 +204,21 @@ class TodayLineCard extends FormattingSettingsCard {
 }
 
 /**
+ * Zoom and scroll of this visual only (it does not filter the others). The range shown is saved in the hidden
+ * properties `start` and `end` of this object.
+ */
+class ZoomCard extends FormattingSettingsCard {
+    show = new formattingSettings.ToggleSwitch({ name: "show", displayNameKey: "Prop_Show", value: false });
+    showSlider = new formattingSettings.ToggleSwitch({ name: "showSlider", displayNameKey: "Prop_ShowSlider", value: true });
+    wheel = new formattingSettings.AutoDropdown({ name: "wheel", displayNameKey: "Prop_WheelZoom", value: "ctrl" });
+
+    name: string = "zoom";
+    displayNameKey: string = "Card_Zoom";
+    topLevelSlice = this.show;
+    slices: Array<FormattingSettingsSlice> = [this.showSlider, this.wheel];
+}
+
+/**
  * Visual settings model class
  */
 export class VisualFormattingSettingsModel extends FormattingSettingsModel {
@@ -214,6 +230,7 @@ export class VisualFormattingSettingsModel extends FormattingSettingsModel {
     dateAxis = new DateAxisCard();
     labels = new LabelsCard();
     todayLine = new TodayLineCard();
+    zoom = new ZoomCard();
 
-    cards = [this.legend, this.lanes, this.colors, this.markers, this.icons, this.dateAxis, this.labels, this.todayLine];
+    cards = [this.legend, this.lanes, this.colors, this.markers, this.icons, this.dateAxis, this.labels, this.todayLine, this.zoom];
 }

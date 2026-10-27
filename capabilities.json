@@ -749,6 +749,50 @@
                     }
                 }
             }
+        },
+        "zoom": {
+            "displayNameKey": "Card_Zoom",
+            "properties": {
+                "show": {
+                    "displayNameKey": "Prop_Show",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "showSlider": {
+                    "displayNameKey": "Prop_ShowSlider",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "wheel": {
+                    "displayNameKey": "Prop_WheelZoom",
+                    "type": {
+                        "enumeration": [
+                            {
+                                "value": "ctrl",
+                                "displayName": "Ctrl + wheel",
+                                "displayNameKey": "Enum_WheelCtrl"
+                            },
+                            {
+                                "value": "wheel",
+                                "displayName": "Wheel",
+                                "displayNameKey": "Enum_WheelOnly"
+                            }
+                        ]
+                    }
+                },
+                "start": {
+                    "type": {
+                        "text": true
+                    }
+                },
+                "end": {
+                    "type": {
+                        "text": true
+                    }
+                }
+            }
         }
     },
     "dataViewMappings": [

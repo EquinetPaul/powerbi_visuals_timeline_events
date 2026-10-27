@@ -128,5 +128,21 @@
     "Editor_NoLegend": "Ajoutez un champ Légende pour choisir une couleur par groupe.",
     "Role_Lane": "Couloir",
     "Tooltip_Events": "{0} événements",
-    "Tooltip_More": "+{0} autres"
+    "Tooltip_More": "+{0} autres",
+    "Card_Zoom": "Zoom",
+    "Prop_ShowSlider": "Curseur de plage",
+    "Prop_WheelZoom": "Zoom à la molette",
+    "Enum_WheelCtrl": "Ctrl + molette",
+    "Enum_WheelOnly": "Molette seule",
+    "Zoom_Slider": "Plage affichée. Tirez les poignées pour zoomer et la fenêtre pour vous déplacer.",
+    "Zoom_Start": "Début de la plage",
+    "Zoom_End": "Fin de la plage",
+    "Zoom_Window": "Plage affichée",
+    "Zoom_Reset": "Tout afficher",
+    "Zoom_From": "Du",
+    "Zoom_To": "Au",
+    "Zoom_HiddenBefore": "{0} événements avant",
+    "Zoom_HiddenBeforeOne": "1 événement avant",
+    "Zoom_HiddenAfter": "{0} événements après",
+    "Zoom_HiddenAfterOne": "1 événement après"
 }

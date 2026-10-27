@@ -128,5 +128,21 @@
     "Editor_NoLegend": "Add a Legend field to choose a color per group.",
     "Role_Lane": "Lane",
     "Tooltip_Events": "{0} events",
-    "Tooltip_More": "+{0} more"
+    "Tooltip_More": "+{0} more",
+    "Card_Zoom": "Zoom",
+    "Prop_ShowSlider": "Range slider",
+    "Prop_WheelZoom": "Mouse wheel zoom",
+    "Enum_WheelCtrl": "Ctrl + wheel",
+    "Enum_WheelOnly": "Wheel",
+    "Zoom_Slider": "Range shown. Drag the handles to zoom and the window to scroll.",
+    "Zoom_Start": "Start of the range",
+    "Zoom_End": "End of the range",
+    "Zoom_Window": "Range shown",
+    "Zoom_Reset": "Show all",
+    "Zoom_From": "From",
+    "Zoom_To": "To",
+    "Zoom_HiddenBefore": "{0} earlier events",
+    "Zoom_HiddenBeforeOne": "1 earlier event",
+    "Zoom_HiddenAfter": "{0} later events",
+    "Zoom_HiddenAfterOne": "1 later event"
 }

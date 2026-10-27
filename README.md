@@ -23,7 +23,9 @@ Custom Power BI visual that displays events on a horizontal timeline.
 - Selection and cross-filtering: click an event or a legend item, Ctrl+click to add, click the background to clear
 - Context menu, keyboard navigation (arrow keys, Enter), bookmarks
 - Optional "Today" line
-- Format pane in the Power BI style: Legend, Lanes, Colors, Markers, Icons, Date axis, Event labels, Today line
+- Optional **zoom and scroll** (Zoom card): a range slider under the timeline, Ctrl + wheel, pinch, drag;
+  the ends of the line count the events outside the range. It only changes this visual, never filters the others
+- Format pane in the Power BI style: Legend, Lanes, Colors, Markers, Icons, Date axis, Event labels, Today line, Zoom
 - English and French, numbers and dates formatted with the model's format strings and the report locale
 - High contrast mode, landing page, rendering events
 
@@ -38,6 +40,26 @@ Custom Power BI visual that displays events on a horizontal timeline.
 
 > If the Date field shows a date hierarchy (Year / Quarter / Month / Day), click the arrow next to the
 > field in the Date well and select the column name instead of "Date Hierarchy".
+
+## Zoom
+Turn on the **Zoom** card of the format pane (off by default). Then:
+- **Range slider** under the timeline: drag a handle to zoom, drag the window to scroll, click next to the window
+  to move it there, use the wheel over it to zoom. Double-click it, or click the button at its right, to show all
+  the dates again. "Range slider" in the card hides it; the other gestures still work.
+- **Timeline**: Ctrl + wheel (or a trackpad pinch) zooms around the pointer, Shift + wheel or a horizontal swipe
+  scrolls, dragging the background scrolls. Set "Mouse wheel zoom" to "Wheel" to zoom without Ctrl; the wheel then
+  no longer scrolls the lanes (use their scroll bar).
+- **Touch**: drag with one finger to scroll, pinch with two to zoom.
+- **Ends of the line**: `‹ 2` and `4 ›` count the events before and after the range (per lane). Hover them to list
+  those events, click them to scroll to the closest one.
+- **Keyboard**: on an event, `+` and `-` zoom around it and `0` shows all the dates; the arrow keys, Home and End
+  scroll to events outside the range. The slider's handles and window take the arrow keys, Page Up/Page Down,
+  Home/End, `+` and `-`.
+
+Like Power BI's zoom sliders, the range is saved with the report when it is changed in edit mode (Power BI
+Desktop, or editing in the service), in the hidden properties `zoom.start` and `zoom.end`. In reading view it
+only lasts while the report is open. When the filters leave no event in the range, all the dates are shown, and
+the range comes back with the events.
 
 ## Icons
 Icons come from [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) (MIT License,

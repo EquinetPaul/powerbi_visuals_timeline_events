@@ -53,8 +53,26 @@ import {
     LaneOrder,
     LegendPosition,
     LineStyle,
-    VisualFormattingSettingsModel
+    VisualFormattingSettingsModel,
+    WheelZoom
 } from "./settings";
+import {
+    canZoom,
+    fitRange,
+    getMinSpan,
+    getRangeKey,
+    getRangeProperties,
+    getVisibleBounds,
+    getWheelDelta,
+    getWheelZoomFactor,
+    getZoomDomain,
+    panRange,
+    readSavedRange,
+    SLIDER_HEIGHT,
+    TimeRange,
+    zoomRange,
+    ZoomSlider
+} from "./zoom";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 // Space kept above and below the drawing (and inside each lane).
@@ -80,6 +98,15 @@ const MAX_TOOLTIP_EVENTS = 10;
 const MAX_TOOLTIP_ROWS = 40;
 // Non-breaking spaces, so that the Tooltips fields are indented under their event.
 const TOOLTIP_INDENT = "\u00A0\u00A0\u00A0\u00A0";
+// Pills at the ends of a zoomed timeline that count the events before and after the range shown.
+const EDGE_HINT_WIDTH = 30;
+const EDGE_HINT_HEIGHT = 16;
+const EDGE_HINT_FONT_SIZE = 10;
+// A drag shorter than this is a click.
+const PAN_THRESHOLD = 4;
+// The zoom range is saved with the report this long after the last change.
+const ZOOM_SAVE_DELAY = 400;
+const DAY = 24 * 60 * 60 * 1000;
 
 interface Theme {
     isHighContrast: boolean;
@@ -124,6 +151,38 @@ interface BandOptions {
     /** Keeps the line at the same height whatever the number of label rows, so that lanes line up. */
     fixedLine: boolean;
     background: string;
+    /** Events of the band before and after the zoom range, counted at the ends of the line. */
+    hiddenBefore: number[];
+    hiddenAfter: number[];
+}
+
+/**
+ * What the plot shows, kept so that a zoom redraws the timeline without the legend.
+ */
+interface PlotState {
+    data: TimelineData;
+    lanes: Lane[] | null;
+    width: number;
+    height: number;
+}
+
+/**
+ * Where the plot draws its dates: `left` is the left of the timeline in the plot (after the lane names),
+ * and the dates of `domain` go from x0 to x1.
+ */
+interface PlotGeometry {
+    left: number;
+    x0: number;
+    x1: number;
+    domain: TimeRange;
+}
+
+/** A drag that scrolls the timeline, or a two-finger pinch that zooms it. */
+interface ZoomGesture {
+    startX: number;
+    startRange: TimeRange;
+    panning: boolean;
+    pinch: { distance: number; anchor: number } | null;
 }
 
 export class Visual implements IVisual {
@@ -150,6 +209,24 @@ export class Visual implements IVisual {
     /** Groups of markers that touch or overlap, as event indexes, and the cluster of each event. */
     private clusters: number[][] = [];
     private clusterOf: number[] = [];
+    /** Hidden events counted by each edge hint. */
+    private hints: number[][] = [];
+
+    private plot: HTMLDivElement;
+    private slider: ZoomSlider;
+    private plotState: PlotState | null = null;
+    private plotGeometry: PlotGeometry | null = null;
+    /** Range chosen with the zoom, or null for all the data. It may go past the data left by the filters. */
+    private zoomRange: TimeRange | null = null;
+    /** The saved range last applied or saved, so that only a new saved range (undo, other user) replaces the zoom. */
+    private savedZoomKey: string | null = null;
+    private isEditMode = false;
+    private zoomFrame = 0;
+    private zoomSaveTimer = 0;
+    private pointers = new Map<number, { x: number; y: number }>();
+    private gesture: ZoomGesture | null = null;
+    private suppressClick = false;
+    private restoringFocus = false;
 
     constructor(options: VisualConstructorOptions) {
         this.host = options.host;
@@ -170,9 +247,16 @@ export class Visual implements IVisual {
 
         this.chart = document.createElement("div");
         this.chart.className = "timeline-chart";
-        this.chart.setAttribute("role", "listbox");
-        this.chart.setAttribute("aria-multiselectable", "true");
         this.root.appendChild(this.chart);
+        this.plot = document.createElement("div");
+        this.plot.className = "timeline-plot";
+        this.plot.setAttribute("role", "listbox");
+        this.plot.setAttribute("aria-multiselectable", "true");
+        this.chart.appendChild(this.plot);
+        this.slider = new ZoomSlider({
+            onChange: (range, commit) => this.setZoom(range, commit),
+            onTooltip: (range, point, isTouchEvent) => this.showRangeTooltip(range, point, isTouchEvent)
+        });
 
         this.message = document.createElement("div");
         this.message.className = "timeline-message";
@@ -189,10 +273,15 @@ export class Visual implements IVisual {
     public update(options: VisualUpdateOptions) {
         this.eventService.renderingStarted(options);
         try {
-            this.formattingSettings = this.formattingSettingsService.populateFormattingSettingsModel(
-                VisualFormattingSettingsModel,
-                getTableDataView(options.dataViews)
-            );
+            const dataView = getTableDataView(options.dataViews);
+            this.formattingSettings = this.formattingSettingsService.populateFormattingSettingsModel(VisualFormattingSettingsModel, dataView);
+            // Like Power BI's zoom sliders, the range is saved with the report in edit mode only.
+            this.isEditMode = options.viewMode === powerbi.ViewMode.Edit || options.viewMode === powerbi.ViewMode.InFocusEdit;
+            const saved = readSavedRange(dataView);
+            if (saved.key !== this.savedZoomKey) {
+                this.zoomRange = saved.range;
+                this.savedZoomKey = saved.key;
+            }
             this.theme = this.getTheme();
             this.root.style.setProperty("--timeline-focus-color", this.theme.isHighContrast ? this.theme.foregroundSelected : "");
 
@@ -290,6 +379,7 @@ export class Visual implements IVisual {
 
     private renderMessage(text: string, title: string | null): void {
         this.data = null;
+        this.plotState = null;
         this.legend.style.display = "none";
         this.chart.style.display = "none";
         this.message.style.display = "flex";
@@ -337,23 +427,333 @@ export class Visual implements IVisual {
         this.chart.style.display = "block";
         this.focusedIndex = Math.min(this.focusedIndex, data.events.length - 1);
 
+        const active = document.activeElement;
+        const markerFocused = active instanceof Element && active.classList.contains("timeline-marker") && this.plot.contains(active);
+
         const lanes = this.getLanes(data);
         const legendSize = this.renderLegend(data, width, height);
         const isVerticalLegend = this.root.classList.contains("legend-left") || this.root.classList.contains("legend-right");
         const chartWidth = Math.max(isVerticalLegend ? width - legendSize : width, 1);
         const chartHeight = Math.max(isVerticalLegend ? height : height - legendSize, 1);
 
-        this.chart.replaceChildren();
-        this.chart.setAttribute("aria-label", this.getString("Aria_Timeline"));
-        this.clusters = [];
-        this.clusterOf = new Array(data.events.length);
-        if (lanes) {
-            this.renderLanes(data, lanes, chartWidth, chartHeight);
+        const zoomable = this.canZoomInteractively(data);
+        const showSlider = zoomable && this.formattingSettings.zoom.showSlider.value;
+        this.plot.setAttribute("aria-label", this.getString("Aria_Timeline"));
+        this.plot.classList.toggle("zoomable", zoomable);
+        this.plotState = { data, lanes, width: chartWidth, height: Math.max(chartHeight - (showSlider ? SLIDER_HEIGHT : 0), 1) };
+        this.renderPlot();
+
+        if (showSlider) {
+            // Appending it again would move it, and take the focus away from it.
+            if (this.slider.element.parentElement !== this.chart) {
+                this.chart.appendChild(this.slider.element);
+            }
+            this.slider.render({
+                width: chartWidth,
+                left: this.plotGeometry.left,
+                x0: this.plotGeometry.x0,
+                x1: this.plotGeometry.x1,
+                min: data.minDate.getTime(),
+                max: data.maxDate.getTime(),
+                dots: data.events.map((event) => ({ time: event.date.getTime(), color: event.color })),
+                theme: this.theme,
+                getString: (key) => this.getString(key),
+                formatTime: (time, span) => this.formatZoomTime(time, span)
+            }, this.getDomain(data));
         } else {
-            this.renderSingle(data, chartWidth, chartHeight);
+            this.slider.element.remove();
         }
 
         this.syncSelection(this.selectionManager.getSelectionIds() as ISelectionId[]);
+        // An update (for example the one that follows saving the zoom range) redraws the markers: keep the focus.
+        const marker = markerFocused ? this.plot.querySelector<SVGGElement>(`.timeline-marker[data-index="${this.focusedIndex}"]`) : null;
+        if (marker) {
+            this.restoringFocus = true;
+            marker.focus();
+            this.restoringFocus = false;
+        }
+    }
+
+    /**
+     * Draws the single timeline or the lanes for the current zoom range.
+     */
+    private renderPlot(): void {
+        if (this.zoomFrame) {
+            cancelAnimationFrame(this.zoomFrame);
+            this.zoomFrame = 0;
+        }
+        const state = this.plotState;
+        if (!state) {
+            return;
+        }
+        this.plot.replaceChildren();
+        this.plot.style.height = `${state.height}px`;
+        this.clusters = [];
+        this.clusterOf = new Array(state.data.events.length);
+        this.hints = [];
+        const domain = this.getDomain(state.data);
+        if (state.lanes) {
+            this.renderLanes(state.data, state.lanes, state.width, state.height, domain);
+        } else {
+            this.renderSingle(state.data, state.width, state.height, domain);
+        }
+
+        // The focused event may be outside the range: the first event shown takes its place in the tab order.
+        if (this.allowInteractions() && !this.plot.querySelector(".timeline-marker[tabindex=\"0\"]")) {
+            const first = this.plot.querySelector<SVGGElement>(".timeline-marker");
+            if (first) {
+                first.setAttribute("tabindex", "0");
+                this.focusedIndex = Number(first.getAttribute("data-index"));
+            }
+        }
+        this.applySelectionStyles();
+    }
+
+    // ----- Zoom -----
+
+    /** The dates shown: the zoom range clipped to the data, or all the data. */
+    private getDomain(data: TimelineData): TimeRange {
+        const min = data.minDate.getTime();
+        const max = data.maxDate.getTime();
+        const domain = this.formattingSettings.zoom.show.value ? getZoomDomain(this.zoomRange, min, max) : null;
+        return domain || { start: min, end: max };
+    }
+
+    private isZoomed(data: TimelineData): boolean {
+        const domain = this.getDomain(data);
+        return domain.start > data.minDate.getTime() || domain.end < data.maxDate.getTime();
+    }
+
+    private canZoomInteractively(data: TimelineData): boolean {
+        return this.formattingSettings.zoom.show.value && this.allowInteractions() && canZoom(data.minDate.getTime(), data.maxDate.getTime());
+    }
+
+    /**
+     * Shows a new range (null for all the data). The timeline is redrawn at the next frame, or at once for the
+     * keyboard. `save` saves the range with the report once the gesture is over.
+     */
+    private setZoom(range: TimeRange | null, save: boolean, immediate: boolean = false): void {
+        const data = this.plotState ? this.plotState.data : null;
+        if (!data) {
+            return;
+        }
+        const min = data.minDate.getTime();
+        const max = data.maxDate.getTime();
+        const fitted = range ? fitRange(range, min, max) : null;
+        this.zoomRange = fitted && (fitted.start > min || fitted.end < max) ? fitted : null;
+        this.slider.setRange(this.getDomain(data));
+        if (immediate) {
+            this.renderPlot();
+        } else if (!this.zoomFrame) {
+            this.zoomFrame = requestAnimationFrame(() => {
+                this.zoomFrame = 0;
+                this.renderPlot();
+            });
+        }
+        if (save) {
+            this.saveZoom();
+        }
+    }
+
+    private saveZoom(): void {
+        window.clearTimeout(this.zoomSaveTimer);
+        if (!this.isEditMode) {
+            return;
+        }
+        this.zoomSaveTimer = window.setTimeout(() => {
+            const properties = getRangeProperties(this.zoomRange);
+            const key = getRangeKey(properties);
+            if (key !== this.savedZoomKey) {
+                this.savedZoomKey = key;
+                this.host.persistProperties({ merge: [{ objectName: "zoom", selector: null, properties }] });
+            }
+        }, ZOOM_SAVE_DELAY);
+    }
+
+    /** Date of a pointer position on the timeline, inside the range shown. */
+    private getTimeAt(clientX: number): number {
+        const { domain, x0, x1 } = this.plotGeometry;
+        const x = this.getPlotX(clientX);
+        return clamp(domain.start + ((x - x0) / Math.max(x1 - x0, 1)) * (domain.end - domain.start), domain.start, domain.end);
+    }
+
+    private getPlotX(clientX: number): number {
+        return clientX - this.plot.getBoundingClientRect().left - this.plotGeometry.left;
+    }
+
+    /** Dates at the times shown by the slider; with less than two days, the time of day too. */
+    private formatZoomTime(time: number, span: number): string {
+        if (span >= 2 * DAY && this.data) {
+            return this.data.formatDate(new Date(time));
+        }
+        const options: Intl.DateTimeFormatOptions = { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" };
+        try {
+            return new Intl.DateTimeFormat(this.host.locale, options).format(new Date(time));
+        } catch {
+            return new Date(time).toLocaleString();
+        }
+    }
+
+    private showRangeTooltip(range: TimeRange | null, clientPoint: [number, number], isTouchEvent: boolean): void {
+        const tooltipService = this.host.tooltipService;
+        if (!range) {
+            this.hideTooltip(isTouchEvent);
+            return;
+        }
+        if (!tooltipService || !tooltipService.enabled()) {
+            return;
+        }
+        const span = range.end - range.start;
+        const rect = this.target.getBoundingClientRect();
+        tooltipService.show({
+            coordinates: [clientPoint[0] - rect.left, clientPoint[1] - rect.top],
+            isTouchEvent,
+            dataItems: [
+                { displayName: this.getString("Zoom_From"), value: this.formatZoomTime(range.start, span) },
+                { displayName: this.getString("Zoom_To"), value: this.formatZoomTime(range.end, span) }
+            ],
+            identities: []
+        });
+    }
+
+    /** Scrolls so that the closest event hidden past an edge comes into view. */
+    private revealHidden(hintIndex: number): void {
+        const indexes = this.hints[hintIndex];
+        if (!indexes || !this.data || !this.canZoomInteractively(this.data)) {
+            return;
+        }
+        const domain = this.getDomain(this.data);
+        const span = domain.end - domain.start;
+        const first = this.data.events[indexes[0]].date.getTime();
+        const before = first < domain.start;
+        const time = before ? this.data.events[indexes[indexes.length - 1]].date.getTime() : first;
+        this.setZoom(before ? { start: time - span * 0.1, end: time + span * 0.9 } : { start: time - span * 0.9, end: time + span * 0.1 }, true);
+    }
+
+    /** Ctrl + wheel (or the wheel alone, see the Zoom card) zooms around the pointer; Shift + wheel scrolls. */
+    private onWheel(event: WheelEvent): void {
+        const data = this.data;
+        if (!data || !this.plotGeometry || !this.canZoomInteractively(data) || !(event.target instanceof Node) || !this.plot.contains(event.target)) {
+            return;
+        }
+        const { x0, x1 } = this.plotGeometry;
+        const { dx, dy } = getWheelDelta(event, x1 - x0);
+        const min = data.minDate.getTime();
+        const max = data.maxDate.getTime();
+        const domain = this.getDomain(data);
+        if (event.shiftKey || Math.abs(dx) > Math.abs(dy)) {
+            if (!this.isZoomed(data)) {
+                return;
+            }
+            event.preventDefault();
+            const pixels = dx !== 0 ? dx : dy;
+            this.setZoom(panRange(domain, (pixels / Math.max(x1 - x0, 1)) * (domain.end - domain.start), min, max), true);
+            return;
+        }
+        if (!(event.ctrlKey || event.metaKey || this.formattingSettings.zoom.wheel.value as WheelZoom === "wheel")) {
+            return;
+        }
+        event.preventDefault();
+        this.setZoom(zoomRange(domain, getWheelZoomFactor(dy), this.getTimeAt(event.clientX), min, max), true);
+    }
+
+    private onGestureStart(event: PointerEvent): void {
+        this.suppressClick = false;
+        const data = this.data;
+        const target = event.target instanceof Element ? event.target : null;
+        if (!data || !this.plotGeometry || !this.canZoomInteractively(data) || (event.pointerType === "mouse" && event.button !== 0)
+            || !target || !this.plot.contains(target) || target.closest(".timeline-hint, .timeline-lane-name")) {
+            return;
+        }
+        // A new first pointer starts a new gesture, even if the end of the last one happened outside the visual.
+        if (event.isPrimary) {
+            this.pointers.clear();
+        }
+        this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        const domain = this.getDomain(data);
+        if (this.pointers.size === 1) {
+            this.gesture = { startX: event.clientX, startRange: domain, panning: false, pinch: null };
+        } else if (this.pointers.size === 2) {
+            const [a, b] = Array.from(this.pointers.values());
+            this.gesture = {
+                startX: 0,
+                startRange: domain,
+                panning: true,
+                pinch: { distance: Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1), anchor: this.getTimeAt((a.x + b.x) / 2) }
+            };
+            this.pointers.forEach((_, pointerId) => this.chart.setPointerCapture(pointerId));
+            this.hideTooltip(true);
+        }
+    }
+
+    /**
+     * Dragging the timeline scrolls it, pinching zooms it. Returns true while a gesture uses the pointer.
+     */
+    private onGestureMove(event: PointerEvent): boolean {
+        const point = this.pointers.get(event.pointerId);
+        const gesture = this.gesture;
+        const data = this.data;
+        if (!point || !gesture || !data || !this.plotGeometry) {
+            return false;
+        }
+        point.x = event.clientX;
+        point.y = event.clientY;
+        const { x0, x1 } = this.plotGeometry;
+        const min = data.minDate.getTime();
+        const max = data.maxDate.getTime();
+        if (gesture.pinch) {
+            if (this.pointers.size >= 2) {
+                const [a, b] = Array.from(this.pointers.values());
+                const factor = gesture.pinch.distance / Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1);
+                const span = clamp((gesture.startRange.end - gesture.startRange.start) * factor, getMinSpan(min, max), max - min);
+                // The date under the fingers stays under them.
+                const start = gesture.pinch.anchor - ((this.getPlotX((a.x + b.x) / 2) - x0) / Math.max(x1 - x0, 1)) * span;
+                this.setZoom({ start, end: start + span }, false);
+            }
+            return true;
+        }
+        const dx = event.clientX - gesture.startX;
+        if (!gesture.panning) {
+            if (Math.abs(dx) < PAN_THRESHOLD || !this.isZoomed(data)) {
+                return false;
+            }
+            gesture.panning = true;
+            this.chart.setPointerCapture(event.pointerId);
+            this.chart.classList.add("panning");
+            this.hideTooltip(event.pointerType === "touch");
+        }
+        const span = gesture.startRange.end - gesture.startRange.start;
+        this.setZoom(panRange(gesture.startRange, (-dx / Math.max(x1 - x0, 1)) * span, min, max), false);
+        return true;
+    }
+
+    private onGestureEnd(event: PointerEvent): void {
+        const gesture = this.gesture;
+        if (!this.pointers.delete(event.pointerId) || !gesture) {
+            return;
+        }
+        if (this.pointers.size === 0) {
+            this.gesture = null;
+            this.chart.classList.remove("panning");
+            if (gesture.panning) {
+                // The click that ends a drag neither selects nor clears the selection.
+                this.suppressClick = event.type === "pointerup";
+                this.saveZoom();
+            }
+        } else if (gesture.pinch && this.data) {
+            // One finger left after a pinch: it scrolls from here.
+            const [rest] = Array.from(this.pointers.values());
+            this.gesture = { startX: rest.x, startRange: this.getDomain(this.data), panning: true, pinch: null };
+        }
+    }
+
+    /** + and - zoom around the focused event, 0 shows all the data. */
+    private zoomAroundEvent(index: number, key: string): void {
+        const data = this.data;
+        const min = data.minDate.getTime();
+        const max = data.maxDate.getTime();
+        const range = key === "0" ? null : zoomRange(this.getDomain(data), key === "-" ? 2 : 0.5, data.events[index].date.getTime(), min, max);
+        this.setZoom(range, true, true);
     }
 
     /**
@@ -487,40 +887,53 @@ export class Visual implements IVisual {
         });
     }
 
-    private renderSingle(data: TimelineData, width: number, height: number): void {
+    private renderSingle(data: TimelineData, width: number, height: number, domain: TimeRange): void {
         const settings = this.formattingSettings;
         const indexes = data.events.map((_, index) => index);
-        const svg = this.appendSvg(this.chart, width, height);
-        const { x0, x1, xOf } = this.getScale(data, width);
+        const { visible, before, after } = this.splitByDomain(data, indexes, domain);
+        const svg = this.appendSvg(this.plot, width, height);
+        const { x0, x1, xOf } = this.getScale(data, width, domain);
+        this.plotGeometry = { left: 0, x0, x1, domain };
 
         const axisStyle = this.getTextStyle(settings.dateAxis.font, settings.dateAxis.labelColor);
         const axisMode = settings.dateAxis.labelMode.value as DateLabelMode;
         const axisLabels = settings.dateAxis.show.value
-            ? this.getAxisLabels(data, axisMode, xOf, x0, x1, width, axisStyle)
+            ? this.getAxisLabels(data, visible, domain, axisMode, xOf, x0, x1, width, axisStyle)
             : [];
 
+        // Keyboard navigation goes through all the events, scrolling to those outside the range.
         this.laneIndexes = [indexes];
         this.laneOf = indexes.map(() => 0);
-        this.drawBand(svg, data, indexes, width, height, {
+        this.drawBand(svg, data, visible, width, height, {
             x0,
             x1,
             xOf,
             axisLabels,
             ticks: axisMode === "startEnd" ? [] : axisLabels.map((label) => label.tickX),
             gridlines: false,
-            todayX: this.getTodayX(data, xOf),
+            todayX: this.getTodayX(domain, xOf),
             todayLabel: true,
             margin: MARGIN,
             fixedLine: false,
-            background: this.theme.background
+            background: this.theme.background,
+            hiddenBefore: before,
+            hiddenAfter: after
         });
+    }
+
+    /**
+     * Splits event indexes in date order into the events inside the range and those before and after it.
+     */
+    private splitByDomain(data: TimelineData, indexes: number[], domain: TimeRange): { visible: number[]; before: number[]; after: number[] } {
+        const [from, to] = getVisibleBounds(indexes.length, (position) => data.events[indexes[position]].date.getTime(), domain);
+        return { visible: indexes.slice(from, to), before: indexes.slice(0, from), after: indexes.slice(to) };
     }
 
     /**
      * Lanes are HTML rows inside a vertical scroll container, so that wheel and touch scrolling and
      * lane-by-lane snapping come from the browser. The date axis stays at the bottom.
      */
-    private renderLanes(data: TimelineData, lanes: Lane[], width: number, height: number): void {
+    private renderLanes(data: TimelineData, lanes: Lane[], width: number, height: number, domain: TimeRange): void {
         const settings = this.formattingSettings;
         const nameStyle = this.getTextStyle(settings.legend.font, settings.legend.labelColor);
         const axisStyle = this.getTextStyle(settings.dateAxis.font, settings.dateAxis.labelColor);
@@ -531,15 +944,17 @@ export class Visual implements IVisual {
         const nameWidth = Math.round(clamp(longestName + 26, 60, width * 0.3));
         const scrolls = lanes.length > visibleLanes;
         const bandWidth = Math.max(width - nameWidth - (scrolls ? SCROLLBAR_WIDTH : 0), 1);
-        const { x0, x1, xOf } = this.getScale(data, bandWidth);
+        const { x0, x1, xOf } = this.getScale(data, bandWidth, domain);
+        this.plotGeometry = { left: nameWidth, x0, x1, domain };
 
         const axisMode = settings.dateAxis.labelMode.value as DateLabelMode;
+        const allVisible = this.splitByDomain(data, data.events.map((_, index) => index), domain).visible;
         const axisLabels = settings.dateAxis.show.value
-            ? this.getAxisLabels(data, axisMode, xOf, x0, x1, bandWidth, axisStyle)
+            ? this.getAxisLabels(data, allVisible, domain, axisMode, xOf, x0, x1, bandWidth, axisStyle)
             : [];
         const ticks = axisMode === "startEnd" ? [] : axisLabels.map((label) => label.tickX);
         const axisRows = axisLabels.reduce((rows, label) => Math.max(rows, label.rowIndex + 1), 0);
-        const todayX = this.getTodayX(data, xOf);
+        const todayX = this.getTodayX(domain, xOf);
         const axisHeight = TICK_LENGTH + 3 + (axisRows + (todayX !== null ? 1 : 0)) * axisLineHeight + LANE_MARGIN;
         const lanesHeight = Math.max(height - axisHeight, MIN_LANE_HEIGHT);
         const laneHeight = Math.max(MIN_LANE_HEIGHT, lanesHeight / Math.min(visibleLanes, lanes.length));
@@ -548,7 +963,7 @@ export class Visual implements IVisual {
         container.className = "timeline-lanes";
         container.style.height = `${lanesHeight}px`;
         container.addEventListener("scroll", () => { this.lanesScrollTop = container.scrollTop; });
-        this.chart.appendChild(container);
+        this.plot.appendChild(container);
 
         const alternate = settings.lanes.alternateBackground.value && !this.theme.isHighContrast;
         this.laneIndexes = lanes.map((lane) => lane.indexes);
@@ -565,7 +980,8 @@ export class Visual implements IVisual {
             container.appendChild(row);
 
             const svg = this.appendSvg(row, bandWidth, laneHeight - 1);
-            this.drawBand(svg, data, lane.indexes, bandWidth, laneHeight - 1, {
+            const { visible, before, after } = this.splitByDomain(data, lane.indexes, domain);
+            this.drawBand(svg, data, visible, bandWidth, laneHeight - 1, {
                 x0,
                 x1,
                 xOf,
@@ -576,13 +992,15 @@ export class Visual implements IVisual {
                 todayLabel: false,
                 margin: LANE_MARGIN,
                 fixedLine: true,
-                background: isAlternate ? ALTERNATE_LANE_COLOR : this.theme.background
+                background: isAlternate ? ALTERNATE_LANE_COLOR : this.theme.background,
+                hiddenBefore: before,
+                hiddenAfter: after
             });
         });
         container.scrollTop = this.lanesScrollTop;
 
         // Shared date axis
-        const axisSvg = this.appendSvg(this.chart, width, axisHeight);
+        const axisSvg = this.appendSvg(this.plot, width, axisHeight);
         const axisGroup = this.appendGroup(axisSvg, "timeline-axis");
         axisGroup.setAttribute("transform", `translate(${nameWidth} 0)`);
         axisGroup.setAttribute("aria-hidden", "true");
@@ -603,21 +1021,26 @@ export class Visual implements IVisual {
         }
     }
 
-    private getScale(data: TimelineData, width: number): { x0: number; x1: number; xOf: (date: Date) => number } {
+    /**
+     * Places the dates of `domain` between x0 and x1. x0 and x1 do not depend on the zoom, so that the range
+     * slider lines up with the timeline; with the zoom on, they leave room for the edge hints.
+     */
+    private getScale(data: TimelineData, width: number, domain: TimeRange): { x0: number; x1: number; xOf: (date: Date) => number } {
         const maxMarkerSize = Math.max(...data.events.map((event) => this.getMarkerSize(event)));
-        const paddingX = Math.max(16, maxMarkerSize / 2 + 4);
+        const hintSpace = this.formattingSettings.zoom.show.value && canZoom(data.minDate.getTime(), data.maxDate.getTime())
+            ? EDGE_HINT_WIDTH + 4 + maxMarkerSize / 2
+            : 0;
+        const paddingX = Math.max(16, maxMarkerSize / 2 + 4, hintSpace);
         const x0 = paddingX;
         const x1 = Math.max(paddingX + 1, width - paddingX);
-        const minMs = data.minDate.getTime();
-        const rangeMs = data.maxDate.getTime() - minMs;
-        const xOf = (date: Date) => (rangeMs > 0 ? x0 + ((date.getTime() - minMs) / rangeMs) * (x1 - x0) : (x0 + x1) / 2);
+        const rangeMs = domain.end - domain.start;
+        const xOf = (date: Date) => (rangeMs > 0 ? x0 + ((date.getTime() - domain.start) / rangeMs) * (x1 - x0) : (x0 + x1) / 2);
         return { x0, x1, xOf };
     }
 
-    private getTodayX(data: TimelineData, xOf: (date: Date) => number): number | null {
+    private getTodayX(domain: TimeRange, xOf: (date: Date) => number): number | null {
         const today = new Date();
-        const inRange = data.maxDate.getTime() > data.minDate.getTime()
-            && today.getTime() >= data.minDate.getTime() && today.getTime() <= data.maxDate.getTime();
+        const inRange = domain.end > domain.start && today.getTime() >= domain.start && today.getTime() <= domain.end;
         return this.formattingSettings.todayLine.show.value && inRange ? xOf(today) : null;
     }
 
@@ -632,7 +1055,8 @@ export class Visual implements IVisual {
     private drawBand(svg: SVGSVGElement, data: TimelineData, indexes: number[], width: number, height: number, band: BandOptions): void {
         const settings = this.formattingSettings;
         const events = indexes.map((index) => data.events[index]);
-        const markerSize = Math.max(...events.map((event) => this.getMarkerSize(event)));
+        // A lane can have no event in the zoom range.
+        const markerSize = events.length > 0 ? Math.max(...events.map((event) => this.getMarkerSize(event))) : settings.markers.size.value;
         const radius = markerSize / 2;
         const { xs, anchors } = this.getMarkerPositions(events, band.xOf, markerSize, band.x0, band.x1);
 
@@ -722,6 +1146,38 @@ export class Visual implements IVisual {
 
         this.drawClusters(svg, indexes, xs, lineY, markerSize);
         this.drawMarkers(svg, data, indexes, xs, lineY);
+        this.drawEdgeHint(svg, band.hiddenBefore, "before", width, lineY);
+        this.drawEdgeHint(svg, band.hiddenAfter, "after", width, lineY);
+    }
+
+    /**
+     * A pill at an end of the line with the number of events past that end of the zoom range. Hovering it lists
+     * them, clicking it scrolls to the closest one.
+     */
+    private drawEdgeHint(svg: SVGSVGElement, indexes: number[], side: "before" | "after", width: number, lineY: number): void {
+        if (indexes.length === 0) {
+            return;
+        }
+        const style: TextStyle = {
+            ...this.getTextStyle(this.formattingSettings.dateAxis.font, this.formattingSettings.dateAxis.labelColor),
+            fontSize: EDGE_HINT_FONT_SIZE,
+            bold: false,
+            italic: false,
+            underline: false
+        };
+        const count = indexes.length > 99 ? "99+" : indexes.length.toString();
+        const text = side === "before" ? `‹ ${count}` : `${count} ›`;
+        const hintWidth = Math.min(EDGE_HINT_WIDTH, measureText(text, style) + 10);
+        const left = side === "before" ? 2 : width - 2 - hintWidth;
+
+        const group = this.appendGroup(svg, "timeline-hint");
+        group.setAttribute("data-hint", this.hints.length.toString());
+        group.setAttribute("aria-hidden", "true");
+        this.hints.push(indexes);
+        const pill = appendRect(group, left, lineY - EDGE_HINT_HEIGHT / 2, hintWidth, EDGE_HINT_HEIGHT, this.theme.background);
+        pill.setAttribute("rx", (EDGE_HINT_HEIGHT / 2).toString());
+        pill.setAttribute("stroke", this.theme.isHighContrast ? this.theme.foreground : DEFAULT_LINE_COLOR);
+        this.drawLabel(group, text, left + hintWidth / 2, "middle", lineY - EDGE_HINT_HEIGHT / 2, EDGE_HINT_HEIGHT, style, false, null);
     }
 
     /**
@@ -780,8 +1236,13 @@ export class Visual implements IVisual {
         return { xs, anchors };
     }
 
+    /**
+     * Date labels of the range `domain`. `visible` are the indexes of the events inside it.
+     */
     private getAxisLabels(
         data: TimelineData,
+        visible: number[],
+        domain: TimeRange,
         mode: DateLabelMode,
         xOf: (date: Date) => number,
         x0: number,
@@ -789,24 +1250,27 @@ export class Visual implements IVisual {
         width: number,
         style: TextStyle
     ): AxisLabel[] {
+        const start = new Date(domain.start);
+        const end = new Date(domain.end);
         if (mode === "startEnd") {
-            if (data.maxDate.getTime() === data.minDate.getTime()) {
+            if (domain.end === domain.start) {
                 const center = (x0 + x1) / 2;
-                return [{ x: center, tickX: center, text: data.formatDate(data.minDate), rowIndex: 0, anchor: "middle" }];
+                return [{ x: center, tickX: center, text: data.formatDate(start), rowIndex: 0, anchor: "middle" }];
             }
             return [
-                { x: x0, tickX: x0, text: data.formatDate(data.minDate), rowIndex: 0, anchor: "start" },
-                { x: x1, tickX: x1, text: data.formatDate(data.maxDate), rowIndex: 0, anchor: "end" }
+                { x: x0, tickX: x0, text: data.formatDate(start), rowIndex: 0, anchor: "start" },
+                { x: x1, tickX: x1, text: data.formatDate(end), rowIndex: 0, anchor: "end" }
             ];
         }
 
         if (mode === "eventDates") {
             // One label per date, centred under that date's markers.
-            const { anchors } = this.getMarkerPositions(data.events, xOf, this.formattingSettings.markers.size.value, x0, x1);
+            const events = visible.map((index) => data.events[index]);
+            const { anchors } = this.getMarkerPositions(events, xOf, this.formattingSettings.markers.size.value, x0, x1);
             const items: LabelItem[] = [];
-            data.events.forEach((event, index) => {
-                if (index === 0 || event.date.getTime() !== data.events[index - 1].date.getTime()) {
-                    items.push({ x: anchors[index], maxWidth: 0, text: event.dateText, key: index });
+            events.forEach((event, position) => {
+                if (position === 0 || event.date.getTime() !== events[position - 1].date.getTime()) {
+                    items.push({ x: anchors[position], maxWidth: 0, text: event.dateText, key: visible[position] });
                 }
             });
             const widths = getLabelWidths(items.map((item) => item.x), MIN_LABEL_WIDTH, width - 4);
@@ -815,7 +1279,7 @@ export class Visual implements IVisual {
                 .map((layout) => ({ x: layout.x, tickX: layout.anchorX, text: layout.text, rowIndex: layout.rowIndex, anchor: "middle" }));
         }
 
-        return getAxisTicks(data.minDate, data.maxDate, x0, x1, style, this.host.locale).map((tick) => {
+        return getAxisTicks(start, end, x0, x1, style, this.host.locale).map((tick) => {
             const labelWidth = measureText(tick.text, style);
             const x = xOf(tick.date);
             return { x: clamp(x, labelWidth / 2 + 2, width - labelWidth / 2 - 2), tickX: x, text: tick.text, rowIndex: 0, anchor: "middle" };
@@ -1002,8 +1466,18 @@ export class Visual implements IVisual {
             if (!this.data || !this.allowInteractions()) {
                 return;
             }
-            if (event.target instanceof Element && event.target.closest(".timeline-cluster")) {
-                // Between two markers of a cluster: neither a marker nor the background.
+            if (this.suppressClick) {
+                this.suppressClick = false;
+                return;
+            }
+            const target = event.target instanceof Element ? event.target : null;
+            const hint = target ? target.closest(".timeline-hint") : null;
+            if (hint) {
+                this.revealHidden(Number(hint.getAttribute("data-hint")));
+                return;
+            }
+            if (target && target.closest(".timeline-cluster, .timeline-zoom")) {
+                // Between two markers of a cluster, or on the range slider: neither a marker nor the background.
                 return;
             }
             const index = this.getEventIndex(event.target);
@@ -1025,9 +1499,30 @@ export class Visual implements IVisual {
             event.preventDefault();
         });
 
+        this.chart.addEventListener("wheel", (event: WheelEvent) => this.onWheel(event), { passive: false });
+        this.chart.addEventListener("pointerdown", (event: PointerEvent) => this.onGestureStart(event));
+        this.chart.addEventListener("pointerup", (event: PointerEvent) => this.onGestureEnd(event));
+        this.chart.addEventListener("pointercancel", (event: PointerEvent) => this.onGestureEnd(event));
+
         this.chart.addEventListener("pointermove", (event: PointerEvent) => {
+            if (this.onGestureMove(event)) {
+                return;
+            }
             const isTouchEvent = event.pointerType === "touch";
             const point: [number, number] = [event.clientX, event.clientY];
+            const target = event.target instanceof Element ? event.target : null;
+            if (target && target.closest(".timeline-zoom")) {
+                // The slider shows its own tooltip while it is dragged.
+                if (!this.slider.isDragging) {
+                    this.hideTooltip(isTouchEvent);
+                }
+                return;
+            }
+            const hint = target ? target.closest(".timeline-hint") : null;
+            if (hint) {
+                this.showHintTooltip(Number(hint.getAttribute("data-hint")), point, isTouchEvent);
+                return;
+            }
             const cluster = this.getHoveredCluster(event.target);
             if (cluster && cluster.length > 1) {
                 this.showTooltip(cluster, point, isTouchEvent);
@@ -1046,7 +1541,7 @@ export class Visual implements IVisual {
         // Keyboard users get the tooltip of the focused marker.
         this.chart.addEventListener("focusin", (event: FocusEvent) => {
             const index = this.getEventIndex(event.target);
-            if (index !== null) {
+            if (index !== null && !this.restoringFocus) {
                 const rect = (event.target as Element).getBoundingClientRect();
                 this.showTooltip([index], [rect.left + rect.width / 2, rect.top + rect.height / 2], false);
             }
@@ -1120,6 +1615,16 @@ export class Visual implements IVisual {
             case " ":
                 this.selectEvents([this.data.events[index].selectionId], isMultiSelect(event));
                 break;
+            case "+":
+            case "=":
+            case "-":
+            case "0":
+                if (!this.canZoomInteractively(this.data)) {
+                    return;
+                }
+                this.zoomAroundEvent(index, event.key);
+                next = index;
+                break;
             default:
                 return;
         }
@@ -1143,6 +1648,15 @@ export class Visual implements IVisual {
      * Roving tabindex: only one marker is in the tab order, the arrow keys move between markers.
      */
     private focusMarker(index: number): void {
+        // An event outside the zoom range: scroll to it first.
+        if (this.data && this.canZoomInteractively(this.data)) {
+            const domain = this.getDomain(this.data);
+            const time = this.data.events[index].date.getTime();
+            if (time < domain.start || time > domain.end) {
+                const half = (domain.end - domain.start) / 2;
+                this.setZoom({ start: time - half, end: time + half }, true, true);
+            }
+        }
         const previous = this.chart.querySelector(".timeline-marker[tabindex=\"0\"]");
         if (previous) {
             previous.setAttribute("tabindex", "-1");
@@ -1221,9 +1735,9 @@ export class Visual implements IVisual {
     }
 
     /**
-     * Shows the tooltip of one event, or the list of the events of a cluster.
+     * Shows the tooltip of one event, or the list of the events of a cluster or of an edge hint (with `header`).
      */
-    private showTooltip(indexes: number[], clientPoint: [number, number], isTouchEvent: boolean): void {
+    private showTooltip(indexes: number[], clientPoint: [number, number], isTouchEvent: boolean, header?: string): void {
         const tooltipService = this.host.tooltipService;
         if (!this.data || !tooltipService || !tooltipService.enabled()) {
             return;
@@ -1233,19 +1747,31 @@ export class Visual implements IVisual {
         tooltipService.show({
             coordinates: [clientPoint[0] - rect.left, clientPoint[1] - rect.top],
             isTouchEvent,
-            dataItems: events.length === 1 ? this.getTooltipItems(events[0]) : this.getClusterTooltipItems(events),
+            dataItems: events.length === 1 && !header ? this.getTooltipItems(events[0]) : this.getClusterTooltipItems(events, header),
             identities: events.map((event) => event.selectionId)
         });
+    }
+
+    /** The events hidden past an edge of the zoom range, the closest first. */
+    private showHintTooltip(hintIndex: number, clientPoint: [number, number], isTouchEvent: boolean): void {
+        const indexes = this.hints[hintIndex];
+        if (!indexes || !this.data) {
+            return;
+        }
+        const before = this.data.events[indexes[0]].date.getTime() < this.getDomain(this.data).start;
+        const key = (before ? "Zoom_HiddenBefore" : "Zoom_HiddenAfter") + (indexes.length === 1 ? "One" : "");
+        const header = this.getString(key).replace("{0}", indexes.length.toString());
+        this.showTooltip(before ? indexes.slice().reverse() : indexes, clientPoint, isTouchEvent, header);
     }
 
     /**
      * For each event, a row with its date (or its legend value when they all share the date) and its name,
      * followed by its Tooltips fields, indented.
      */
-    private getClusterTooltipItems(events: TimelineEvent[]): VisualTooltipDataItem[] {
+    private getClusterTooltipItems(events: TimelineEvent[], headerText?: string): VisualTooltipDataItem[] {
         const sameDate = events.every((event) => event.date.getTime() === events[0].date.getTime());
         const count = this.getString("Tooltip_Events").replace("{0}", events.length.toString());
-        const header = sameDate ? `${events[0].dateText} · ${count}` : count;
+        const header = headerText || (sameDate ? `${events[0].dateText} · ${count}` : count);
         const items: VisualTooltipDataItem[] = [];
         let shown = 0;
         for (const event of events) {
